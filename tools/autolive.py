@@ -175,6 +175,9 @@ HOLD_SUSTAIN_FRAMES = 14         # この連続フレーム数トリガー超持
                                  # (0.5s+)が確実に超える値に設定（6では波紋を誤検出した実測）。
 HOLD_MAX_SEC = 2.5               # 1ホールドの最大保持秒（誤検出でも必ず離す上限）
 HOLD_REL_FACTOR = 0.45           # 保持解除のしきい（trigger×これ を下回ったら離す＝ヒステリシス）
+# --- 実験的トラッキングエンジン(engine=track) ---
+TRACK_ARRIVE_PX = 34.0           # ノーツがレーン円のこのpx内に来たら打鍵
+TRACK_FORGET_SEC = 6.0           # acted集合を周期クリア（id枯渇/メモリ防止。ライブ跨ぎ）
 KEEPALIVE_GAP_SEC = 0.6          # 無検出がこの秒続いたら genuine 入力を1発（PAUSE防止, 0.7s未満）
 
 # テンプレ（assets/templates/*.png）。明るさゲートと併用し高閾値照合する。
@@ -328,7 +331,8 @@ def match_multiscale(frame_bgr, templ):
 class AutoLive:
     def __init__(self, max_loops, dry_run=False, verbose=False, max_seconds=None,
                  tap_mode=TAP_MODE_DEFAULT, note_trigger=NOTE_TRIGGER_FRAC,
-                 note_lead=NOTE_ROI_LEAD, note_roi=NOTE_ROI_RADIUS, holds=False):
+                 note_lead=NOTE_ROI_LEAD, note_roi=NOTE_ROI_RADIUS, holds=False,
+                 engine="roi"):
         self.max_loops = max_loops
         self.dry_run = dry_run
         self.verbose = verbose
@@ -352,6 +356,11 @@ class AutoLive:
         self.note_hi_frames = [0] * len(CIRCLES)  # 円ごとのトリガー超持続フレーム数（長押し検出）
         self.hold_idx = None        # 現在ホールド中の円index（Noneなら非ホールド）
         self.hold_start = 0.0       # ホールド開始時刻（HOLD_MAX_SEC上限用）
+        # --- 実験的トラッキングエンジン（engine="track"）用 ---
+        self.engine = engine        # "roi"(既定・現行) / "track"(スポーン検出+追跡)
+        self._ne = None             # note_engine モジュール（遅延import）
+        self.tracker = None         # note_engine.Tracker
+        self.acted = set()          # 既に打鍵したノーツtrack id
         self.last_input_ts = 0.0    # 最後に genuine 入力を出した時刻（キープアライブ用）
         self.esc_since = None       # ESC を押し始めた時刻（長押し停止の判定用）
         self.last_activate = 0.0
@@ -539,6 +548,40 @@ class AutoLive:
         if not tapped:
             self._keepalive(now)
         time.sleep(0.005)
+
+    def _gameplay_track(self, frame, now):
+        """実験エンジン: note_engine でノーツをスポーン検出→追跡→レーン/到達判定し打鍵。
+        現状は全ノーツ tap（追跡駆動でクリアできるかの検証段階）。種別ジェスチャ（長押し/
+        フリック/スライド）は _dispatch_note で順次対応。無検出時はキープアライブで PAUSE 防止。"""
+        if self._ne is None:
+            import note_engine as NE
+            self._ne = NE
+            self.tracker = NE.Tracker(self.win, self.content)
+            self.acted = set()
+        NE = self._ne
+        blobs = NE.detect_notes(frame, self.win, self.content)
+        anns = self.tracker.update(blobs, now)
+        acted_now = False
+        for a in anns:
+            if not a["is_note"] or a["lane"] < 0 or a["id"] in self.acted:
+                continue
+            lx, ly = self.tracker.lane_px[a["lane"]]
+            dist = ((a["pos"][0] - lx) ** 2 + (a["pos"][1] - ly) ** 2) ** 0.5
+            if dist < TRACK_ARRIVE_PX:
+                self._dispatch_note(a)
+                self.acted.add(a["id"])
+                self.last_input_ts = now
+                acted_now = True
+        if not acted_now:
+            self._keepalive(now)
+        time.sleep(0.005)
+
+    def _dispatch_note(self, a):
+        """ノーツ種別に応じた操作。現状は全て tap（追跡駆動の検証優先）。
+        種別判定が信頼できるようになったら green=長押し/red=フリック/blue=スライドを有効化する。"""
+        xf, yf = self._ne.LANES[a["lane"]]
+        # TODO(type-dispatch): a["type"] が green/red/blue かつ高信頼なら専用ジェスチャ。
+        self.click_content(xf, yf)
 
     def _keepalive(self, now):
         """ノーツ無し区間でも genuine 入力を絶やさず PAUSE を防ぐ。
@@ -738,7 +781,10 @@ class AutoLive:
                     self.log(f"[warn] gameplay が {now - self.gameplay_since:.0f}s 継続（異常/"
                              f"ミラーリング切断の可能性）→ {fn} 保存して停止")
                     break
-                if self.tap_mode == "rotate":
+                if self.engine == "track":
+                    # 実験: スポーン検出→追跡→レーン/ETAで打鍵（note_engine）。
+                    self._gameplay_track(frame, now)
+                elif self.tap_mode == "rotate":
                     # フォールバック: 5円を約50Hzで巡回連打。
                     cx, cy = CIRCLES[self.circle_i % len(CIRCLES)]
                     self.circle_i += 1
@@ -956,6 +1002,9 @@ def main():
     ap.add_argument("--holds", action="store_true",
                     help="長押し（緑）対応を有効化（実験的。明るさ持続で検出するがタップ波紋に"
                          "誤反応しやすく既定では無効）")
+    ap.add_argument("--engine", choices=["roi", "track"], default="roi",
+                    help="ライブ中の打鍵エンジン。roi=現行(到達点の明るさ・安定)、"
+                         "track=実験(スポーン検出+追跡)。既定 roi")
     args = ap.parse_args()
     if args.calibrate:
         calibrate()
@@ -963,7 +1012,7 @@ def main():
     AutoLive(args.loops, dry_run=args.dry_run, verbose=args.verbose,
              max_seconds=args.max_seconds, tap_mode=args.tap_mode,
              note_trigger=args.note_trigger, note_lead=args.note_lead,
-             note_roi=args.note_roi, holds=args.holds).run()
+             note_roi=args.note_roi, holds=args.holds, engine=args.engine).run()
 
 
 if __name__ == "__main__":

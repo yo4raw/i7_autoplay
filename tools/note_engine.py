@@ -23,11 +23,15 @@ import numpy as np
 import cv2
 
 sys.path.insert(0, os.path.dirname(__file__))
-import autolive as A  # content矩形やCIRCLESを流用  # noqa: E402
+# 注: autolive とは相互利用するため、ここでは **import しない**（循環import回避）。
+# autolive 側が note_engine を import する。CLI関数内でのみ autolive を遅延importする。
 
-# --- フィールド模型（content矩形相対の小数） ---
-# 4レーン = 現行 CIRCLES から中央(index2)を除いた4箇所（左端/左下/右下/右端）。
-LANES = [A.CIRCLES[0], A.CIRCLES[1], A.CIRCLES[3], A.CIRCLES[4]]
+# --- フィールド模型（content矩形相対の小数。autolive.CIRCLES と同一値を持つ） ---
+# タップ円5箇所（中央 index2 はダミー＝SCORE表示と重なる）。autolive.CIRCLES と一致させること。
+CIRCLES = [(0.16, 0.63), (0.33, 0.85), (0.49, 0.93), (0.62, 0.85), (0.74, 0.63)]
+# 4レーン = 中央(index2)を除いた4箇所（左端/左下/右下/右端）。
+LANES = [CIRCLES[0], CIRCLES[1], CIRCLES[3], CIRCLES[4]]
+DARK_THRESH = 65.0  # autolive と同値（live判定用）
 # ノーツのスポーン中心（上部中央。実測でノーツ群が湧く位置。content相対）。
 # 実測: ノーツ track の開始は y_px≈55（content相対≈0.06）、x≈336（≈0.50）。
 SPAWN = (0.50, 0.06)
@@ -205,6 +209,7 @@ def _track(dirpath):
     """連番フレームを Tracker に通し、検出された動くノーツ（レーン/ETA/種別）を集計。"""
     import glob
     from PIL import Image
+    import autolive as A  # 遅延import（循環回避）
     al = A.AutoLive(1, dry_run=True)
     files = sorted(glob.glob(os.path.join(dirpath, "*.png")))
     trk = Tracker(al.win, al.content)
@@ -232,6 +237,7 @@ def _live(seconds=60.0):
     **クリックは一切しない**ので周回に干渉しない（mssキャプチャのみ）。"""
     import time
     import driver
+    import autolive as A  # 遅延import（循環回避）
     al = A.AutoLive(1, dry_run=True)
     win, content = al.win, al.content
     trk = Tracker(win, content)
@@ -242,7 +248,7 @@ def _live(seconds=60.0):
     print(f"[note_engine.live] {seconds:.0f}s 観測開始（読み取り専用・クリックなし）", flush=True)
     while time.time() - t0 < seconds:
         frame = driver.grab(win)
-        if float(frame.mean()) >= A.DARK_THRESH:
+        if float(frame.mean()) >= DARK_THRESH:
             time.sleep(0.1)  # ライブ中(暗)以外はスキップ
             continue
         nframes += 1
@@ -263,6 +269,7 @@ def _live(seconds=60.0):
 
 def _viz(frame_path, out_path):
     from PIL import Image, ImageDraw
+    import autolive as A  # 遅延import（循環回避）
     al = A.AutoLive(1, dry_run=True)
     frame = np.array(Image.open(frame_path).convert("RGB"))
     notes = detect_notes(frame, al.win, al.content)
@@ -291,6 +298,7 @@ def _viz(frame_path, out_path):
 def _scan(dirpath):
     import glob
     from PIL import Image
+    import autolive as A  # 遅延import（循環回避）
     al = A.AutoLive(1, dry_run=True)
     files = sorted(glob.glob(os.path.join(dirpath, "*.png")))
     import collections

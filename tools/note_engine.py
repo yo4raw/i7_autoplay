@@ -29,7 +29,8 @@ import autolive as A  # content矩形やCIRCLESを流用  # noqa: E402
 # 4レーン = 現行 CIRCLES から中央(index2)を除いた4箇所（左端/左下/右下/右端）。
 LANES = [A.CIRCLES[0], A.CIRCLES[1], A.CIRCLES[3], A.CIRCLES[4]]
 # ノーツのスポーン中心（上部中央。実測でノーツ群が湧く位置。content相対）。
-SPAWN = (0.49, 0.28)
+# 実測: ノーツ track の開始は y_px≈55（content相対≈0.06）、x≈336（≈0.50）。
+SPAWN = (0.50, 0.06)
 # 検出対象の縦帯（スポーン〜中盤。下部のタップ円の波紋を拾わないよう円より上に限定）。
 FIELD_Y0 = 0.05   # content相対。これ未満は上枠/キャラカード
 FIELD_Y1 = 0.62   # これ以上はタップ円帯（波紋誤検出を避ける）
@@ -110,6 +111,121 @@ def assign_lane(cx, cy, win, content):
     return bi
 
 
+class Tracker:
+    """フレーム間でブロブを対応付け、動くノーツだけを抽出してレーン/ETAを推定する。
+    静止物(PAUSE/円フチ/端)は変位ゼロなので is_note=False で除外される。"""
+
+    GATE = 34.0          # 対応付け距離ゲート(px)
+    MISS_MAX = 2         # この回数連続で未対応なら track 終了
+    MOVE_DISP = 30.0     # これ以上動いた track を「動くもの」とみなす
+    OUTWARD_MIN = 18.0   # スポーンから外側へこれ以上進んだら note 候補
+
+    def __init__(self, win, content):
+        self.win = win
+        self.content = content
+        W, top, ch = _content_geom(win, content)
+        self.sx, self.sy = W * SPAWN[0], top + SPAWN[1] * ch
+        self.lane_px = [(W * xf, top + yf * ch) for xf, yf in LANES]
+        self.tracks = {}   # id -> dict
+        self._nid = 0
+
+    def update(self, blobs, t):
+        """blobs(detect_notes出力) と時刻 t で track 群を更新。アクティブ track list を返す。"""
+        W, top, ch = _content_geom(self.win, self.content)
+        blobs = [b for b in blobs if 8 < b["x"] < W - 8]  # 端の誤検出除外
+        used = set()
+        for tr in self.tracks.values():
+            lx, ly = tr["pts"][-1][1], tr["pts"][-1][2]
+            best, bj = self.GATE, -1
+            for j, b in enumerate(blobs):
+                if j in used:
+                    continue
+                d = ((b["x"] - lx) ** 2 + (b["y"] - ly) ** 2) ** 0.5
+                if d < best:
+                    best, bj = d, j
+            if bj >= 0:
+                b = blobs[bj]
+                tr["pts"].append((t, b["x"], b["y"]))
+                tr["miss"] = 0
+                tr["colors"].append(b["color"])
+                used.add(bj)
+            else:
+                tr["miss"] += 1
+        for j, b in enumerate(blobs):
+            if j in used:
+                continue
+            self.tracks[self._nid] = {
+                "id": self._nid, "pts": [(t, b["x"], b["y"])],
+                "miss": 0, "colors": [b["color"]],
+            }
+            self._nid += 1
+        # 終了 track を回収
+        for tid in [k for k, v in self.tracks.items() if v["miss"] > self.MISS_MAX]:
+            del self.tracks[tid]
+        return [self._annotate(tr) for tr in self.tracks.values()]
+
+    def _annotate(self, tr):
+        """track に is_note/lane/eta/速度を付与して返す（参照を汚さずdictコピー）。"""
+        pts = tr["pts"]
+        p0, p1 = pts[0], pts[-1]
+        disp = ((p1[1] - p0[1]) ** 2 + (p1[2] - p0[2]) ** 2) ** 0.5
+        d0 = ((p0[1] - self.sx) ** 2 + (p0[2] - self.sy) ** 2) ** 0.5
+        d1 = ((p1[1] - self.sx) ** 2 + (p1[2] - self.sy) ** 2) ** 0.5
+        is_note = len(pts) >= 3 and disp > self.MOVE_DISP and (d1 - d0) > self.OUTWARD_MIN
+        lane, eta, speed = -1, None, 0.0
+        if is_note:
+            # 速度（直近数点）
+            rec = pts[-min(5, len(pts)):]
+            dt = rec[-1][0] - rec[0][0]
+            if dt > 1e-3:
+                vx = (rec[-1][1] - rec[0][1]) / dt
+                vy = (rec[-1][2] - rec[0][2]) / dt
+                speed = (vx * vx + vy * vy) ** 0.5
+                # 速度方向に最も近いレーンへ割当（放射移動）
+                import math
+                vang = math.atan2(vy, vx)
+                best = 1e9
+                for i, (lx, ly) in enumerate(self.lane_px):
+                    la = math.atan2(ly - self.sy, lx - self.sx)
+                    dd = abs((vang - la + math.pi) % (2 * math.pi) - math.pi)
+                    if dd < best:
+                        best, lane = dd, i
+                if lane >= 0 and speed > 1e-3:
+                    lx, ly = self.lane_px[lane]
+                    rem = ((lx - p1[1]) ** 2 + (ly - p1[2]) ** 2) ** 0.5
+                    eta = rem / speed
+        # 種別の暫定: track中で最も多い非white色（あれば）
+        nonwhite = [c for c in tr["colors"] if c != "white"]
+        ntype = max(set(nonwhite), key=nonwhite.count) if nonwhite else "tap"
+        return {"id": tr["id"], "pts": pts, "is_note": is_note, "lane": lane,
+                "eta": eta, "speed": speed, "type": ntype, "pos": (p1[1], p1[2])}
+
+
+def _track(dirpath):
+    """連番フレームを Tracker に通し、検出された動くノーツ（レーン/ETA/種別）を集計。"""
+    import glob
+    from PIL import Image
+    al = A.AutoLive(1, dry_run=True)
+    files = sorted(glob.glob(os.path.join(dirpath, "*.png")))
+    trk = Tracker(al.win, al.content)
+    seen = {}  # id -> last annotation
+    DT = 0.05
+    for fi, fp in enumerate(files):
+        frame = np.array(Image.open(fp).convert("RGB"))
+        blobs = detect_notes(frame, al.win, al.content)
+        for a in trk.update(blobs, fi * DT):
+            if a["is_note"]:
+                seen[a["id"]] = a
+    notes = list(seen.values())
+    import collections
+    lane = collections.Counter(a["lane"] for a in notes)
+    typ = collections.Counter(a["type"] for a in notes)
+    print(f"frames={len(files)} note-tracks={len(notes)} lanes={dict(lane)} types={dict(typ)}")
+    for a in sorted(notes, key=lambda x: x["id"])[:25]:
+        e = f'{a["eta"]:.2f}s' if a["eta"] is not None else "-"
+        print(f'  id{a["id"]:3} lane{a["lane"]} {a["type"]:5} speed{a["speed"]:.0f}px/s eta{e} pos({a["pos"][0]:.0f},{a["pos"][1]:.0f})')
+
+
 def _viz(frame_path, out_path):
     from PIL import Image, ImageDraw
     al = A.AutoLive(1, dry_run=True)
@@ -162,6 +278,8 @@ def main():
         _viz(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "/tmp/i7_note_viz.png")
     elif cmd == "scan":
         _scan(sys.argv[2])
+    elif cmd == "track":
+        _track(sys.argv[2])
     else:
         print(__doc__)
 

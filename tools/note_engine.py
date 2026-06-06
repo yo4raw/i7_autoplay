@@ -226,6 +226,41 @@ def _track(dirpath):
         print(f'  id{a["id"]:3} lane{a["lane"]} {a["type"]:5} speed{a["speed"]:.0f}px/s eta{e} pos({a["pos"][0]:.0f},{a["pos"][1]:.0f})')
 
 
+def _live(seconds=60.0):
+    """読み取り専用のリアルタイム検証。autolive(タップ周回)の横で動かし、新エンジンが
+    実機フレームからノーツを検出・追跡・レーン/ETA推定できているかをログ出力する。
+    **クリックは一切しない**ので周回に干渉しない（mssキャプチャのみ）。"""
+    import time
+    import driver
+    al = A.AutoLive(1, dry_run=True)
+    win, content = al.win, al.content
+    trk = Tracker(win, content)
+    reported = set()
+    t0 = time.time()
+    nframes = 0
+    note_total = 0
+    print(f"[note_engine.live] {seconds:.0f}s 観測開始（読み取り専用・クリックなし）", flush=True)
+    while time.time() - t0 < seconds:
+        frame = driver.grab(win)
+        if float(frame.mean()) >= A.DARK_THRESH:
+            time.sleep(0.1)  # ライブ中(暗)以外はスキップ
+            continue
+        nframes += 1
+        t = time.time() - t0
+        blobs = detect_notes(frame, win, content)
+        for a in trk.update(blobs, t):
+            # 「確定したノーツ」を一度だけ報告: is_note かつ ETA が短く(到達直前)なった時点
+            if a["is_note"] and a["id"] not in reported and a["eta"] is not None \
+                    and a["eta"] < 0.25 and a["lane"] >= 0:
+                reported.add(a["id"])
+                note_total += 1
+                print(f"  [{t:5.1f}s] ノーツ確定 lane{a['lane']} 種別{a['type']:5} "
+                      f"speed{a['speed']:.0f}px/s pos({a['pos'][0]:.0f},{a['pos'][1]:.0f})",
+                      flush=True)
+        time.sleep(0.02)
+    print(f"[note_engine.live] 終了: gameplayフレーム{nframes} 検出ノーツ{note_total}", flush=True)
+
+
 def _viz(frame_path, out_path):
     from PIL import Image, ImageDraw
     al = A.AutoLive(1, dry_run=True)
@@ -280,6 +315,8 @@ def main():
         _scan(sys.argv[2])
     elif cmd == "track":
         _track(sys.argv[2])
+    elif cmd == "live":
+        _live(float(sys.argv[2]) if len(sys.argv) > 2 else 60.0)
     else:
         print(__doc__)
 

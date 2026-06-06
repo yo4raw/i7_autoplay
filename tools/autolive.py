@@ -137,7 +137,8 @@ CLOSEX_OFFSETS = [(159.5, -97.5), (124.5, -66.5), (148.0, -44.5)]
 # --- anchor-offset: テンプレのマッチ位置からの固定pxオフセットでボタンを押す（画像追従・端末非依存） ---
 # 各値 = SE実測の (ボタン位置 - テンプレマッチ中心)。UIは端末間で同pxサイズのため px固定で可。
 # SEではマッチ位置=SEテンプレ中心なので元のボタン座標を再現（回帰維持）。
-ANCH_RESUME = (101.0, 161.0)      # pause_resume 見出し → 再開ボタン
+ANCH_RESUME = (100.0, 176.0)      # pause_resume 見出し → 再開ボタン（iPhone16実測で較正:
+                                  # 見出し(337,91)→再開(437,267)。旧161ではボタン上端に外れた）
 ANCH_REPLAY_YES = (86.0, 125.0)   # 連続ライブ 見出し → はい
 ANCH_DOWNLOAD = (55.0, 84.0)      # DL本文 → ダウンロード
 ANCH_STORY_NO = (-68.0, 76.0)     # ストーリー本文 → いいえ
@@ -334,7 +335,7 @@ class AutoLive:
     def __init__(self, max_loops, dry_run=False, verbose=False, max_seconds=None,
                  tap_mode=TAP_MODE_DEFAULT, note_trigger=NOTE_TRIGGER_FRAC,
                  note_lead=NOTE_ROI_LEAD, note_roi=NOTE_ROI_RADIUS, holds=False,
-                 engine="roi"):
+                 engine="roi", esc_enabled=True):
         self.max_loops = max_loops
         self.dry_run = dry_run
         self.verbose = verbose
@@ -365,6 +366,7 @@ class AutoLive:
         self.acted = set()          # 既に打鍵したノーツtrack id
         self.last_input_ts = 0.0    # 最後に genuine 入力を出した時刻（キープアライブ用）
         self.esc_since = None       # ESC を押し始めた時刻（長押し停止の判定用）
+        self.esc_enabled = esc_enabled  # False で ESC キルスイッチ無効（自律実行用）
         self.last_activate = 0.0
         self.t_start = time.time()
         self.menu_since = None      # 同じメニューに留まり始めた時刻
@@ -717,7 +719,8 @@ class AutoLive:
         while self.loops_done < self.max_loops:
             # ESC キルスイッチ（長押し）。グローバル検出ゆえ他アプリ向けの ESC タップを拾う
             # ため、ESC を ESC_HOLD_SEC 秒**押し続けた**ときだけ停止する（短タップは無視）。
-            if esc_pressed():
+            # --no-esc 指定時はキルスイッチ無効（自律実行用。停止は pkill）。
+            if self.esc_enabled and esc_pressed():
                 if self.esc_since is None:
                     self.esc_since = time.time()
                 elif time.time() - self.esc_since >= ESC_HOLD_SEC:
@@ -1007,6 +1010,8 @@ def main():
     ap.add_argument("--engine", choices=["roi", "track"], default="roi",
                     help="ライブ中の打鍵エンジン。roi=現行(到達点の明るさ・安定)、"
                          "track=実験(スポーン検出+追跡)。既定 roi")
+    ap.add_argument("--no-esc", action="store_true",
+                    help="ESC キルスイッチを無効化（自律実行用。停止は pkill -f autolive.py）")
     args = ap.parse_args()
     if args.calibrate:
         calibrate()
@@ -1014,7 +1019,8 @@ def main():
     AutoLive(args.loops, dry_run=args.dry_run, verbose=args.verbose,
              max_seconds=args.max_seconds, tap_mode=args.tap_mode,
              note_trigger=args.note_trigger, note_lead=args.note_lead,
-             note_roi=args.note_roi, holds=args.holds, engine=args.engine).run()
+             note_roi=args.note_roi, holds=args.holds, engine=args.engine,
+             esc_enabled=not args.no_esc).run()
 
 
 if __name__ == "__main__":

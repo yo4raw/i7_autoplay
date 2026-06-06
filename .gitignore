@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# venv
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# debug screenshots (autolive writes here)
+/tmp/i7dbg/

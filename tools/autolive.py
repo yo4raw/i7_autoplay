@@ -36,8 +36,9 @@ LIFE 回復（ユーザー要件）:
 - PAUSE を検出した場合は従来どおり即・再開（`P_RESUME`）するフォールバックも残してある。
 
 停止（キルスイッチ）:
-- **ESC キーを押すと停止**する（グローバル検出。フォーカス不問。esc_pressed/ESC_KEYCODE）。
-  実カーソルがワープし続けるため、ESC が最も手軽な停止手段。`pkill -f autolive.py` でも可。
+- **ESC キーを約1.2秒“長押し”すると停止**する（グローバル検出。フォーカス不問。
+  esc_pressed/ESC_KEYCODE/ESC_HOLD_SEC）。グローバル検出ゆえ他アプリ向けの ESC タップを
+  拾わないよう長押しにしている。`pkill -f autolive.py` でも停止可。
 
 使い方:
     python tools/autolive.py --loops 50
@@ -66,8 +67,12 @@ import driver  # noqa: E402
 # genuine な入力として扱われ、PAUSE が起きなくなる（実験で 0 PAUSE / 30s を確認）。
 _HID_SRC = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
 
-# --- キルスイッチ: ESC キー押下で停止 ---
+# --- キルスイッチ: ESC キー“長押し”で停止 ---
+# esc_pressed() は **グローバル検出（フォーカス不問）** なので、エディタ/ターミナルで押した
+# ESC まで拾ってしまう。作業中の何気ない ESC で周回が止まらないよう、**ESC を連続して
+# ESC_HOLD_SEC 秒押し続けた**ときだけ停止する（短いタップでは止まらない）。
 ESC_KEYCODE = 53  # macOS の Escape キーコード
+ESC_HOLD_SEC = 1.2  # この秒数 ESC を押し続けたら停止（誤爆＝他アプリ向けESC対策）
 
 
 def esc_pressed():
@@ -105,6 +110,11 @@ P_EASY_TAB = (0.644, 0.718)      # EASY タブ中心（窓相対・実測。緑�
 # 未知の明るい画面で“やむを得ず”触る安全位置（最下端マージン）。ダイアログのボタン帯
 # (y≈0.74-0.88) や本文・×を避けるため、ボタンが置かれない最下端だけを軽く叩く。
 P_MENU_SAFE = (0.50, 0.97)
+# カード型ポップアップ（報酬獲得/アイテム獲得/RANK UP 等）を閉じる位置。これらは**×でなく
+# 背景（暗転部）のどこをタップしても閉じる**（実機確認。×自体のクリックでは閉じない）。
+# 中央のカードを外した位置を叩くが、**左下はカーソルがDock/ホットコーナー付近へワープして
+# 危険**なため（ユーザー指摘）、カード外の**右上の暗い背景**を叩いて閉じる（端末非依存）。
+P_CARD_DISMISS = (0.86, 0.16)
 
 # --- 端末非依存のクリック（中央アンカー方式） ---
 # ダイアログ/ポップアップは画面中央に同pxサイズで出る（端末間でUIは同サイズ・実測で確認）。
@@ -147,12 +157,24 @@ TAP_MODE_DEFAULT = "timing"
 # タイミング検出のパラメータ（--calibrate と --note-* で実機調整可能。docs/specification.md §17.5）。
 ARC_CENTER = (0.49, 0.50)        # ノーツ放射の中心（円ROIを早撃ち方向へ寄せる基準）
 NOTE_ROI_RADIUS = 0.035          # 円ROI半径（ウィンドウ幅相対, ~18px@529w）
-NOTE_ROI_LEAD = 0.04             # ROIを ARC_CENTER 側へ寄せる量＝取得+クリック遅延の早撃ち補正
+NOTE_ROI_LEAD = 0.025            # ROIを ARC_CENTER 側へ寄せる量＝取得+クリック遅延の早撃ち補正。
+                                 # 実測較正(EASY/SOL TRIGGER): 0.04→0.025 で MISS 12→9・SS昇格・
+                                 # スコア+14k。0.015 は早撃ち不足で PERFECT 低下。ループ高速化
+                                 # (pause照合間引き=DARK_RECHECK_SEC)でレイテンシ減→leadを縮小。
 NOTE_WHITE_V = 170               # min(R,G,B) > これ を「白っぽい（ノーツ）」画素とみなす
 NOTE_TRIGGER_FRAC = 0.06         # white割合がベースライン+これ を超えたらタップ発火
 NOTE_BASELINE_FRAC = 0.20        # white割合がこれ未満の静穏フレームのみEMAベースラインに取り込む
 NOTE_BASELINE_EMA = 0.1          # ベースラインEMAの追従係数
 NOTE_DEBOUNCE_SEC = 0.18         # 1ノーツ=1タップ（タップ波紋の再発火も抑止）
+# --- ホールド（長押し＝緑ノーツ）対応。色ではなく「明るさが持続」することで検出する ---
+# 円ROIがトリガー超えのまま HOLD_SUSTAIN_FRAMES フレーム続いたら長押しノーツとみなし、
+# 明るさが続く限り押下を保持（drag で genuine 入力＝PAUSE防止）。タップ波紋の短い持続では
+# 発火しないようフレーム数はやや多め。安全のため HOLD_MAX_SEC で必ず離す（誤検出の暴走防止）。
+HOLD_SUSTAIN_FRAMES = 14         # この連続フレーム数トリガー超持続で「長押し」と判定（≈0.45s@30fps）。
+                                 # タップ波紋は~0.2-0.3s持続するため、誤検出回避に本物の長押し
+                                 # (0.5s+)が確実に超える値に設定（6では波紋を誤検出した実測）。
+HOLD_MAX_SEC = 2.5               # 1ホールドの最大保持秒（誤検出でも必ず離す上限）
+HOLD_REL_FACTOR = 0.45           # 保持解除のしきい（trigger×これ を下回ったら離す＝ヒステリシス）
 KEEPALIVE_GAP_SEC = 0.6          # 無検出がこの秒続いたら genuine 入力を1発（PAUSE防止, 0.7s未満）
 
 # テンプレ（assets/templates/*.png）。明るさゲートと併用し高閾値照合する。
@@ -190,9 +212,18 @@ MAX_LIFE_RECOVERS = 6              # 連続でこの回数 LIFE 不足が続い�
 SCALES = [0.8, 0.86, 0.93, 1.0, 1.08, 1.18]
 # 明るさ閾値: これ未満ならライブ中（暗い画面）
 DARK_THRESH = 65.0
+# 暗い画面（gameplay/PAUSE）では、重い pause/songselect テンプレ照合を毎フレームせず
+# この秒数おきに間引く。PAUSE・暗いsongselectはタイミング非依存なので数フレーム遅れて
+# 検出してよく、間引くぶんノーツ検出のサンプリングレートが上がり打鍵精度が向上する。
+DARK_RECHECK_SEC = 0.25
 # 未知の明るいダイアログにこの秒数留まったら、ステラ誤使用を避けて停止する。
 # （LIFE 回復ダイアログ等の未知画面でボタンを盲目クリックしないための安全装置）
 STUCK_STOP_SEC = 25.0
+# result/eventresult を連続でこの秒数送り続けても先へ進まないなら異常とみなし停止する。
+# 通常の Result→EVENT RESULT 送りは数秒で次状態(cardx/friendreq 等)へ抜けるため、想定外の
+# オーバーレイ（例: iOS の「iMessage/FaceTime をオンにしますか？」等のシステムダイアログが
+# Result 上に出ると result:0.76 で誤判定し中央タップが効かず無限ループ）を検知して止める。
+RESULT_STUCK_SEC = 30.0
 # gameplay（暗い画面）がこの秒数続いたら異常とみなす。1ライブは PAUSE 解決後 ≈115-125秒
 # なので、余裕を見て 240秒。ミラーリング切断時の暗い「iPhoneが使用されました」オーバーレイ
 # を gameplay と誤認して延々タップし続けるのを防ぐ（明るくないので menu watchdog では止まらない）。
@@ -297,7 +328,7 @@ def match_multiscale(frame_bgr, templ):
 class AutoLive:
     def __init__(self, max_loops, dry_run=False, verbose=False, max_seconds=None,
                  tap_mode=TAP_MODE_DEFAULT, note_trigger=NOTE_TRIGGER_FRAC,
-                 note_lead=NOTE_ROI_LEAD, note_roi=NOTE_ROI_RADIUS):
+                 note_lead=NOTE_ROI_LEAD, note_roi=NOTE_ROI_RADIUS, holds=False):
         self.max_loops = max_loops
         self.dry_run = dry_run
         self.verbose = verbose
@@ -317,11 +348,17 @@ class AutoLive:
         # --- タイミング検出（timing モード）用 ---
         self.note_baseline = [None] * len(CIRCLES)  # 円ごとの white割合 EMA ベースライン
         self.note_last_tap = [0.0] * len(CIRCLES)   # 円ごとの直近タップ時刻（デバウンス）
+        self.holds = holds          # 長押し（緑）対応の有効/無効
+        self.note_hi_frames = [0] * len(CIRCLES)  # 円ごとのトリガー超持続フレーム数（長押し検出）
+        self.hold_idx = None        # 現在ホールド中の円index（Noneなら非ホールド）
+        self.hold_start = 0.0       # ホールド開始時刻（HOLD_MAX_SEC上限用）
         self.last_input_ts = 0.0    # 最後に genuine 入力を出した時刻（キープアライブ用）
-        self.esc_hits = 0           # ESC 連続検出カウンタ（誤検出デバウンス）
+        self.esc_since = None       # ESC を押し始めた時刻（長押し停止の判定用）
         self.last_activate = 0.0
         self.t_start = time.time()
         self.menu_since = None      # 同じメニューに留まり始めた時刻
+        self.result_since = None    # result/eventresult を送り始めた時刻（無限ループ検知用）
+        self._last_dark_check = 0.0  # 暗い画面で pause/songselect を最後に照合した時刻（間引き用）
         self.dbg_dir = "/tmp/i7dbg"
         os.makedirs(self.dbg_dir, exist_ok=True)
         # (top,bottom) px。タイトルバー有り(38,h-9)を初期値とし、暗いゲーム画面で自己補正。
@@ -357,6 +394,18 @@ class AutoLive:
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, mv)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, dn)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
+
+    def _press(self, px, py, kind):
+        """ホールド用に down/move/up を個別に送る（HIDソース＋ワープで genuine 入力）。
+        kind: 'down'(押下開始) / 'move'(押下保持中のドラッグ=PAUSE防止) / 'up'(離す)。"""
+        if self.dry_run:
+            return
+        Quartz.CGWarpMouseCursorPosition((px, py))
+        et = {"down": Quartz.kCGEventLeftMouseDown,
+              "move": Quartz.kCGEventLeftMouseDragged,
+              "up": Quartz.kCGEventLeftMouseUp}[kind]
+        ev = Quartz.CGEventCreateMouseEvent(_HID_SRC, et, (px, py), 0)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
 
     def click_content(self, xf, yf):
         self._click_screen(*self.content_to_screen(xf, yf))
@@ -427,16 +476,66 @@ class AutoLive:
         return fired
 
     def _gameplay_timing(self, frame, now):
-        """各円にノーツ到達を検出したらタップ。無検出ならキープアライブ。"""
+        """各円にノーツ到達を検出したらタップ。長押し（明るさ持続）は押下を保持。
+        無検出ならキープアライブ。"""
+        # 1) 各円の white割合を毎フレーム評価 → ベースライン更新＋トリガー超の連続フレーム数。
+        wf = [self._roi_white_frac(frame, i) for i in range(len(CIRCLES))]
+        fired = [False] * len(CIRCLES)
+        for i in range(len(CIRCLES)):
+            base = self.note_baseline[i]
+            if base is None:
+                self.note_baseline[i] = wf[i]
+                continue
+            f = (wf[i] - base) > self.note_trigger
+            fired[i] = f
+            if f:
+                self.note_hi_frames[i] += 1
+            else:
+                self.note_hi_frames[i] = 0
+                if wf[i] < NOTE_BASELINE_FRAC:  # 静穏時のみベースライン取り込み
+                    self.note_baseline[i] = base + (wf[i] - base) * NOTE_BASELINE_EMA
+
+        # 2) ホールド継続中: その円が明るい限り押下保持（drag=genuine入力でPAUSE防止）。
+        #    明るさが引いた or 上限超で離す（誤検出でも HOLD_MAX_SEC で必ず離れる）。
+        if self.holds and self.hold_idx is not None:
+            i = self.hold_idx
+            base = self.note_baseline[i] or 0.0
+            still = (wf[i] - base) > self.note_trigger * HOLD_REL_FACTOR
+            if still and (now - self.hold_start) < HOLD_MAX_SEC:
+                self._press(*self.content_to_screen(*CIRCLES[i]), "move")
+                self.last_input_ts = now
+                time.sleep(0.005)
+                return
+            self._press(*self.content_to_screen(*CIRCLES[i]), "up")
+            if self.verbose:
+                self.log(f"長押し解除 円{i}（{now - self.hold_start:.2f}s）")
+            self.note_last_tap[i] = now
+            self.last_input_ts = now
+            self.hold_idx = None
+            self.note_hi_frames[i] = 0
+            time.sleep(0.02)
+            return
+
+        # 3) 通常検出: 発火円をタップ。明るさが長く持続していれば長押しへ昇格（押下保持）。
         tapped = False
         for i in range(len(CIRCLES)):
             if now - self.note_last_tap[i] < NOTE_DEBOUNCE_SEC:
                 continue
-            if self._note_present(frame, i):
-                self.click_content(*CIRCLES[i])
-                self.note_last_tap[i] = now
+            if not fired[i]:
+                continue
+            if self.holds and self.note_hi_frames[i] >= HOLD_SUSTAIN_FRAMES:
+                self._press(*self.content_to_screen(*CIRCLES[i]), "down")  # 離さず保持開始
+                self.hold_idx = i
+                self.hold_start = now
                 self.last_input_ts = now
+                if self.verbose:
+                    self.log(f"長押し開始 円{i}")
                 tapped = True
+                break
+            self.click_content(*CIRCLES[i])  # 通常タップ（down+up）
+            self.note_last_tap[i] = now
+            self.last_input_ts = now
+            tapped = True
         if not tapped:
             self._keepalive(now)
         time.sleep(0.005)
@@ -489,10 +588,24 @@ class AutoLive:
             res[key] = (score, thr, pos)
             return score >= thr
 
+        if bright < DARK_THRESH:
+            # 暗い＝gameplay or PAUSE(暗背景)。**打鍵タイミング精度のため、重い pause/songselect
+            # 照合は毎フレームせず DARK_RECHECK_SEC おきに間引く**（PAUSE・暗いsongselectは
+            # タイミング非依存で数フレーム遅れて検出可）。間引くぶん _gameplay_timing のノーツ
+            # 検出サンプリングが速くなり精度が上がる。
+            # ※一部の楽曲選択画面はジャケット/KEEP OUTテープで暗くなり閾値(65)を下回る(mean≈61)
+            #   ため、暗め域(>50)では songselect(NEXT, 高specific 0.85)を確認して救済する。
+            now_t = time.time()
+            if now_t - self._last_dark_check >= DARK_RECHECK_SEC:
+                self._last_dark_check = now_t
+                if m("pause"):
+                    return "pause", res
+                if bright > 50.0 and m("songselect"):
+                    return "songselect", res
+            return "gameplay", res
+        # --- 明るい画面（タイミング非依存。毎フレーム照合でよい）---
         if m("pause"):
             return "pause", res
-        if bright < DARK_THRESH:
-            return "gameplay", res
         # --- 明るいメニュー画面（順序が重要） ---
         # LIFE不足ダイアログは最優先で判定（誤って盲目タップしステラを押さないため）。
         if m("lifeshort"):
@@ -557,14 +670,16 @@ class AutoLive:
 
     def _loop(self):
         while self.loops_done < self.max_loops:
-            # ESC キルスイッチ。単発の誤検出で止めないよう2回連続で押下を確認する。
+            # ESC キルスイッチ（長押し）。グローバル検出ゆえ他アプリ向けの ESC タップを拾う
+            # ため、ESC を ESC_HOLD_SEC 秒**押し続けた**ときだけ停止する（短タップは無視）。
             if esc_pressed():
-                self.esc_hits += 1
-                if self.esc_hits >= 2:
-                    self.log("ESC 検出 → 停止")
+                if self.esc_since is None:
+                    self.esc_since = time.time()
+                elif time.time() - self.esc_since >= ESC_HOLD_SEC:
+                    self.log(f"ESC 長押し({ESC_HOLD_SEC}s)検出 → 停止")
                     break
             else:
-                self.esc_hits = 0
+                self.esc_since = None
             if self.max_seconds and time.time() - self.t_start > self.max_seconds:
                 self.log("時間上限に到達 → 終了")
                 break
@@ -653,7 +768,9 @@ class AutoLive:
                 self.click_anchor(res["replay"][2], ANCH_REPLAY_YES)  # マッチ位置+オフセット（画像追従）
                 time.sleep(1.2)
             elif state == "cardx":
-                # 汎用カードポップアップの×（色検出で位置特定・端末非依存）。閉じられず留まる
+                # 汎用カードポップアップ（報酬獲得/アイテム獲得/RANK UP 等）。**×でなく背景の
+                # どこをタップしても閉じる**ため、色検出した×位置（背景汚染でばらつく）ではなく
+                # 中央カードを外した背景（P_CARD_DISMISS）を叩いて確実に閉じる。閉じられず留まる
                 # 場合は watchdog で停止。
                 now = time.time()
                 if self.menu_since is None:
@@ -665,8 +782,8 @@ class AutoLive:
                     _I.fromarray(frame).save(fn)
                     self.log(f"[warn] カードポップアップを閉じられず停滞 → {fn} 保存して停止")
                     break
-                self.log("カードポップアップ → ×（色検出）")
-                self.click_match(res["cardx"][2])
+                self.log("カードポップアップ → 背景タップで閉じる")
+                self.click_window(*P_CARD_DISMISS)
                 time.sleep(0.5)
             elif state == "closex":
                 # カード型ポップアップ（獲得一覧 / 報酬獲得 / 申請完了 / 本日の課題 等）の×。
@@ -707,9 +824,11 @@ class AutoLive:
             elif state == "songselect":
                 # 連戦が終わって楽曲選択へ戻った → **必ず EASY を選択** してから NEXT。
                 # （ユーザー要件: ノーマル等で周回しない。EASY タブを先にタップして固定する。）
+                # **ユーザー要件: 楽曲は変更しない**。曲リスト（左側）は絶対にタップせず、現在
+                # 選択中の曲のまま進める。ここで触るのは EASY タブ（右下・難易度）と NEXT のみ。
                 # NEXTテンプレのマッチ位置を直接クリック（端末非依存）。次状態で再検出して進める。
-                self.log("楽曲選択に戻った → EASY 選択 → NEXT")
-                self.click_window(*P_EASY_TAB)   # EASY タブを選択（ノーマル等を避ける）
+                self.log("楽曲選択に戻った → EASY 選択 → NEXT（曲は変更しない）")
+                self.click_window(*P_EASY_TAB)   # EASY タブを選択（難易度のみ。曲は変えない）
                 time.sleep(0.6)
                 self.click_match(res["songselect"][2])
                 time.sleep(1.6)
@@ -736,10 +855,24 @@ class AutoLive:
                 time.sleep(0.8)
             elif state in ("result", "eventresult"):
                 # per-song Result / EVENT RESULT。クリア計上し、中央タップで送る。
+                now = time.time()
                 if self.was_in_live:
                     self.loops_done += 1
                     self.was_in_live = False
                     self.log(f"★ライブ クリア（通算 {self.loops_done}）")
+                    self.result_since = None  # クリア計上＝進捗。停滞タイマーをリセット
+                # 想定外オーバーレイ（iOSシステムダイアログ等）で result 誤判定→中央タップが
+                # 効かず無限ループするのを検知して停止（スクショ保存）。
+                if self.result_since is None:
+                    self.result_since = now
+                if now - self.result_since > RESULT_STUCK_SEC:
+                    from PIL import Image as _I
+                    fn = os.path.join(self.dbg_dir,
+                                      f"result_stuck_{int(now - self.t_start)}.png")
+                    _I.fromarray(frame).save(fn)
+                    self.log(f"[warn] Result送りが {now - self.result_since:.0f}s 進まず停滞 → "
+                             f"{fn} 保存して停止（システムダイアログ等のオーバーレイの可能性）。")
+                    break
                 self.click_center_off(OFF_RESULT_ADV)  # 画面中央タップで送る
                 time.sleep(0.5)
             else:  # menu: 未知の明るい画面（ローディング/遷移/未知ダイアログ）
@@ -761,6 +894,9 @@ class AutoLive:
             # 同画面ループの可能性があるのでタイマーを維持し watchdog 対象とする。
             if state not in ("menu", "rankup", "closex", "cardx"):
                 self.menu_since = None
+            # result/eventresult を抜けたら（=進捗）Result停滞タイマーをリセット。
+            if state not in ("result", "eventresult"):
+                self.result_since = None
             # gameplay タイマーは gameplay/pause（=ライブ中）以外でリセット。
             # 併せて timing 検出のベースラインも次ライブ用にリセットする。
             if state not in ("gameplay", "pause"):
@@ -817,6 +953,9 @@ def main():
                     help="timing: ROIを中心側へ寄せる早撃ち量")
     ap.add_argument("--note-roi", type=float, default=NOTE_ROI_RADIUS,
                     help="timing: 円ROI半径（ウィンドウ幅相対）")
+    ap.add_argument("--holds", action="store_true",
+                    help="長押し（緑）対応を有効化（実験的。明るさ持続で検出するがタップ波紋に"
+                         "誤反応しやすく既定では無効）")
     args = ap.parse_args()
     if args.calibrate:
         calibrate()
@@ -824,7 +963,7 @@ def main():
     AutoLive(args.loops, dry_run=args.dry_run, verbose=args.verbose,
              max_seconds=args.max_seconds, tap_mode=args.tap_mode,
              note_trigger=args.note_trigger, note_lead=args.note_lead,
-             note_roi=args.note_roi).run()
+             note_roi=args.note_roi, holds=args.holds).run()
 
 
 if __name__ == "__main__":

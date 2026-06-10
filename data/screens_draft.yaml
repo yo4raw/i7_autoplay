@@ -1,0 +1,139 @@
+# 画面グラフ ドラフト（2026-06-11 未明の実機探索による初版素材）
+# 注意: これは設計書 docs/superpowers/specs/2026-06-10-screen-graph-design.md §5 の
+# スキーマに沿った「観察記録」。実装フェーズでバリデータを書くまでは参考データ。
+# 座標はすべて iPhone SE・ミラーリングウィンドウ相対 0..1（実測クリックで動作確認済みのもののみ）。
+
+devices:
+  se:       { label: iPhone SE,  content_aspect: 1.78 }
+  iphone16: { label: iPhone 16, content_aspect: 2.16 }
+
+screens:
+  # ---- ゲーム外（iOS） ----
+  - id: ios_home
+    name: iOSホーム画面
+    kind: nav
+    notes: |
+      ミラーリング接続直後にゲーム未起動だとここ（または直前のアプリ）。
+      アイナナのアプリアイコンをタップで title へ。アイコン位置はホーム配置依存のため
+      テンプレ照合（アイコン画像）で探すこと。SE実測では (0.44, 0.652) だった（配置依存・参考値）。
+    edges:
+      - { action: tap_app_icon, to: title }
+
+  # ---- 起動シーケンス ----
+  - id: title
+    name: タイトル（TAP SCREEN）
+    kind: nav
+    detect: { template: id_anchor, threshold: 0.80 }   # 既存 tap_screen.png
+    actions:
+      tap: { type: click_fixed, pos: { se: [0.50, 0.55] } }   # 画面どこでも可
+    edges:
+      - { action: tap, to: home }     # 初回はDLダイアログ/お知らせを経由することがある
+    notes: 起動直後に注意書き→TAP SCREEN。タップで進む。経由で dldialog/news が挟まる。
+
+  - id: dldialog
+    name: データDL確認
+    kind: dialog
+    detect: { template: id_anchor, threshold: 0.85 }   # 既存 dl_dialog.png（本文）
+    actions:
+      download: { type: click_match, template: download_btn }
+      cancel:   { type: click_match, template: cancel_btn }
+    edges:
+      - { action: download, to: _back }   # 元画面に戻る（DL後）
+      - { action: cancel,   to: _back }
+    notes: |
+      周回経路上では download を選ぶ（既存挙動）。探索でSTORYなど不要な導線では cancel。
+      2026-06-11 実測: 起動時 16.6MB、STORY 初回 2.78MB。
+
+  - id: news
+    name: お知らせポップアップ
+    kind: dialog
+    detect: { template: id_anchor, threshold: 0.85 }   # 「お知らせ」ヘッダ
+    actions:
+      close: { type: click_match, template: close_x }  # 右上シアンの×（実測中心 0.873,0.191）
+    edges:
+      - { action: close, to: home }
+    notes: ホーム入場時に自動で開くことがある。「重要なお知らせ」単体ポップアップも同系。
+
+  # ---- メイン画面 ----
+  - id: home
+    name: ゲームホーム
+    kind: nav
+    # TODO id_anchor 未取得（入力不能で確定アンカーの検証ができず）。_full.png から要切り出し。
+    actions:
+      go_live: { type: click_fixed, pos: { se: [0.19, 0.928] } }   # 下部ナビ LIVE（実測動作確認済み）
+    edges:
+      - { action: go_live, to: songselect }
+    notes: |
+      下部ナビ（実測 y≈0.93）: HOME≈0.05 / LIVE≈0.19 / STORY≈0.26 / MEMBER≈0.37 /
+      AUDITION≈0.475 / SHOWCASE≈0.585 / HALL≈0.69 / WORK≈0.80 / MENU≈0.91。
+      右側はバナーカルーセル（イベント/ログボ等が回転、固定遷移には使わない）。
+      STORY は初回データDL要求（dldialog 経由）。AUDITION=オーディション(ガチャ)系は danger 想定（未探索）。
+
+  - id: songselect
+    name: 楽曲選択
+    kind: loop
+    detect: { template: id_anchor, threshold: 0.85 }   # 既存 song_select.png（NEXTボタン）
+    actions:
+      select_easy: { type: click_fixed, pos: { se: [0.644, 0.718] } }  # 既存実測 P_EASY_TAB
+      go_next:     { type: click_match, template: next_btn }
+      open_menu:   { type: click_fixed, pos: { se: [0.915, 0.934] } }  # MENUボタン（実測動作確認済み）
+    loop_action: [select_easy, go_next]   # ブーストOFF確認は boost_on テンプレ取得後に追加
+    edges:
+      - { action: go_next,   to: friendselect }
+      - { action: open_menu, to: songselect_navbar }
+    notes: |
+      ブースト/オートのトグル表示は左下 boost_label.png（OFF状態）。ON状態のテンプレは未取得
+      （ONにすると消費が変わるため、取得時は ON にして撮影→即 OFF に戻す。周回ポリシー: ブーストOFF必須）。
+      LIFE表示は上部（実測 196/196 形式）。EASY は消費 LIFE 5。
+
+  - id: songselect_navbar
+    name: 楽曲選択＋グローバルナビ
+    kind: nav
+    actions:
+      go_home: { type: click_fixed, pos: { se: [0.05, 0.93] } }   # 実測動作確認済み
+      close:   { type: click_fixed, pos: { se: [0.965, 0.865] } } # ×CLOSE（未実測・要確認）
+    edges:
+      - { action: go_home, to: home }
+      - { action: close,   to: songselect }
+    notes: songselect の MENU ボタンで下部にグローバルナビがオーバーレイ表示される状態。
+
+  # ---- ライブ系 ----
+  - id: pause
+    name: PAUSE（ライブ中断メニュー）
+    kind: dialog
+    detect: { template: id_anchor, threshold: 0.78, brightness: dark }  # 既存 pause_resume.png
+    priority: 10
+    actions:
+      resume: { type: click_fixed, pos: { se: [0.69, 0.76] } }   # 既存実測 P_RESUME
+      retry:  { type: click_match, template: retry_btn }          # やり直す（未使用）
+      giveup: { type: click_match, template: giveup_btn }         # 諦める → giveup_confirm
+    edges:
+      - { action: resume, to: gameplay }
+      - { action: giveup, to: giveup_confirm }
+    notes: ボタンは3つ（諦める/やり直す/再開）。音量スライダあり。曲名表示あり。
+
+  - id: giveup_confirm
+    name: ライブ放棄確認（注意）
+    kind: dialog
+    detect: { template: id_anchor, threshold: 0.85 }   # 「注意」ヘッダ
+    actions:
+      giveup: { type: click_fixed, pos: { se: [0.643, 0.772] } }  # 実測動作確認済み
+      cancel: { type: click_match, template: cancel_btn }
+    edges:
+      - { action: giveup, to: songselect }   # ロード(黒)を挟んで楽曲選択へ戻る（実測）
+      - { action: cancel, to: pause }
+    notes: 「途中で諦めますと報酬を受け取る事ができません。」LIFE は返らない。
+
+# ---- 2026-06-11 未明の実測遷移ログ（生記録） ----
+# ios_home --tap アイナナ--> 注意書き --> title(TAP SCREEN)
+# title --tap--> loading --> dldialog(16.6MB) --download--> title(動画背景)
+# title --tap--> home(+news 自動表示) --close×--> home
+# home --LIVE(0.19,0.928)--> songselect（イベント曲 STARDOM GENIUS が先頭選択済・EASY 選択済・ブーストOFF）
+# songselect --MENU--> songselect_navbar --HOME--> home
+# home --STORY--> dldialog(2.78MB) --cancel(入力死で未確認)-->
+# pause --諦める--> giveup_confirm --諦める--> loading(黒) --> songselect
+#
+# ---- 障害記録 ----
+# 00:20 PAUSE嵐（§17.10 再接続病）をガードが検知し周回停止。
+# 00:5x頃から合成クリック全滅（driver通常クリック・HIDソース+ワープとも無反応）。
+# → §17.10 の悪化形。iPhone 本体の電源再投入が必要。探索のタップ作業は中断。

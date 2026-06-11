@@ -15,11 +15,13 @@ SLOG="/tmp/i7_sentinel.log"
 MAX_RECOVERIES=6
 slog() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$SLOG"; }
 
-prev_warn=$(grep -c "閉じられず停滞" "$LOG" 2>/dev/null || echo 0)
-prev_att=$(grep -c "launch attempt" "$SUPLOG" 2>/dev/null || echo 0)
-prev_clear=$(grep -c "ライブ クリア" "$LOG" 2>/dev/null || echo 0)
+# ベースカウンタは「進捗（クリア増）があった時」または「復旧後」にだけリセットする。
+# （前版は毎ループ更新で、35秒/回の停止サイクルでは 45秒窓に閾値分の増加が乗らず永久に発火しなかった）
+base_warn=$(grep -c "閉じられず停滞" "$LOG" 2>/dev/null || echo 0)
+base_att=$(grep -c "launch attempt" "$SUPLOG" 2>/dev/null || echo 0)
+base_clear=$(grep -c "ライブ クリア" "$LOG" 2>/dev/null || echo 0)
 recoveries=0
-slog "sentinel start (warn=$prev_warn att=$prev_att clear=$prev_clear)"
+slog "sentinel start (warn=$base_warn att=$base_att clear=$base_clear)"
 
 while :; do
   sleep 45
@@ -28,10 +30,14 @@ while :; do
   w=$(grep -c "閉じられず停滞" "$LOG" 2>/dev/null || echo 0)
   a=$(grep -c "launch attempt" "$SUPLOG" 2>/dev/null || echo 0)
   c=$(grep -c "ライブ クリア" "$LOG" 2>/dev/null || echo 0)
+  if (( c > base_clear )); then
+    # 進捗あり＝健全。ベースを現在値に合わせる。
+    base_warn=$w; base_att=$a; base_clear=$c
+    continue
+  fi
   trigger=""
-  if (( w - prev_warn >= 2 )); then trigger="cardx_stuck x$((w - prev_warn))"; fi
-  if (( a - prev_att >= 4 && c - prev_clear == 0 )); then trigger="${trigger} restart_loop x$((a - prev_att))"; fi
-  prev_warn=$w; prev_att=$a; prev_clear=$c
+  if (( w - base_warn >= 2 )); then trigger="cardx_stuck x$((w - base_warn))"; fi
+  if (( a - base_att >= 4 )); then trigger="${trigger} restart_loop x$((a - base_att))"; fi
   [[ -z "$trigger" ]] && continue
 
   recoveries=$(( recoveries + 1 ))
@@ -44,9 +50,9 @@ while :; do
     slog "recovery OK -> relaunch supervisor"
     nohup tools/supervise_autolive.sh "$TARGET" > /dev/null 2>&1 &
     sleep 30   # 周回立ち上がり待ち（直後の attempt 増をトリガ誤検知しないよう同期し直す）
-    prev_att=$(grep -c "launch attempt" "$SUPLOG" 2>/dev/null || echo 0)
-    prev_warn=$(grep -c "閉じられず停滞" "$LOG" 2>/dev/null || echo 0)
-    prev_clear=$(grep -c "ライブ クリア" "$LOG" 2>/dev/null || echo 0)
+    base_att=$(grep -c "launch attempt" "$SUPLOG" 2>/dev/null || echo 0)
+    base_warn=$(grep -c "閉じられず停滞" "$LOG" 2>/dev/null || echo 0)
+    base_clear=$(grep -c "ライブ クリア" "$LOG" 2>/dev/null || echo 0)
   else
     slog "recovery FAILED; giving up"; touch /tmp/i7_freeze_unrecovered; exit 1
   fi

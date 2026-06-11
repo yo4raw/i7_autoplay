@@ -69,18 +69,51 @@ screens:
       右側はバナーカルーセル（イベント/ログボ等が回転、固定遷移には使わない）。
       STORY は初回データDL要求（dldialog 経由）。AUDITION=オーディション(ガチャ)系は danger 想定（未探索）。
 
+  # ---- イベント（2026-06-12 ユーザー案内で確定） ----
+  # 【最重要】下部ナビ LIVE から行く songselect は**通常ライブ**で、イベントptは一切入らない。
+  # イベント周回は必ず以下の経路: songselect 左下のイベントリボン → event_top → 「イベント楽曲」
+  # → event_songselect（難易度タブが EASY+ 等「+」付き）。
+  - id: event_top
+    name: イベントトップ（例: IDOLiSH7 Anniversary 2026）
+    kind: loop
+    actions:
+      go_event_songs: { type: click_fixed, pos: { se: [0.84, 0.78] } }   # 「イベント楽曲」（実測動作確認済み）
+    edges:
+      - { action: go_event_songs, to: event_songselect }
+    notes: |
+      ランキング/累計Pt/ステージ報酬/交換所/課題スケジュール/イベントホールが並ぶ。
+      初回入場時は紹介スライド（TAP SCREEN数枚）と「本日の課題」ポップアップ（×≈(0.798,0.181)）が挟まる。
+
+  - id: event_songselect
+    name: イベント楽曲選択（イベント周回のメイン画面）
+    kind: loop
+    actions:
+      boost_toggle: { type: click_fixed, pos: { se: [0.565, 0.875] } }   # ブースト表示（要・3倍設定）
+      go_next:      { type: click_fixed, pos: { se: [0.86, 0.91] } }
+      to_normal:    { type: click_fixed, pos: { se: [0.10, 0.82] } }     # 左下「Normal Live」switch
+    edges:
+      - { action: go_next,   to: friendselect }
+      - { action: to_normal, to: songselect }
+    notes: |
+      **イベント周回ポリシー（ユーザー指示・恒久）: 難易度 EASY+、ブーストは必ず3倍**。
+      ブーストは消費LIFE倍化（EASY+ 5→15）で獲得pt等が倍化。通常ライブの旧指示「ブーストOFF」は
+      イベントでは適用しない。識別: 難易度タブに「+」が付く（EASY+/NORMAL+/HARD+/EXPERT+）、
+      左下に Normal Live ボタン。曲例: Resonant Pulses / Boys & Girls / Cre Love / メロウブルー。
+
   - id: songselect
-    name: 楽曲選択
+    name: 楽曲選択【通常ライブ・イベントptは入らない】
     kind: loop
     detect: { template: id_anchor, threshold: 0.85 }   # 既存 song_select.png（NEXTボタン）
     actions:
       select_easy: { type: click_fixed, pos: { se: [0.644, 0.718] } }  # 既存実測 P_EASY_TAB
       go_next:     { type: click_match, template: next_btn }
       open_menu:   { type: click_fixed, pos: { se: [0.915, 0.934] } }  # MENUボタン（実測動作確認済み）
-    loop_action: [select_easy, go_next]   # ブーストOFF確認は boost_on テンプレ取得後に追加
+      to_event:    { type: click_fixed, pos: { se: [0.095, 0.89] } }   # 左下イベントリボン（実測動作確認済み）
+    loop_action: [select_easy, go_next]
     edges:
       - { action: go_next,   to: friendselect }
       - { action: open_menu, to: songselect_navbar }
+      - { action: to_event,  to: event_top }
     notes: |
       ブースト/オートのトグル表示は左下 boost_label.png（OFF状態）。ON状態のテンプレは未取得
       （ONにすると消費が変わるため、取得時は ON にして撮影→即 OFF に戻す。周回ポリシー: ブーストOFF必須）。

@@ -71,7 +71,21 @@ def relaunch_game():
 
 STEPS = [
     # (name, template_path, threshold, action)  上から順に照合し、最初に当たったものを実行
-    ("songselect", os.path.join(TEMPLATES, "song_select.png"), 0.85, "DONE"),
+    # 【重要】ゴールは**イベント楽曲選択**（通常の楽曲選択ではイベントptが入らない）。
+    # イベント楽曲選択の確定条件 = 左下「Normal Live」ボタンが見える。
+    ("event_songselect", os.path.join(SCREENS, "event_songselect", "normal_live_btn.png"), 0.85, "DONE"),
+    # イベントトップ → 「イベント楽曲」
+    ("event_songs", os.path.join(SCREENS, "event_top", "event_songs_btn.png"), 0.85, "CLICK"),
+    # イベントトップの「本日の課題」ポップアップ → ×
+    ("daily_close", os.path.join(SCREENS, "event_daily_tasks", "close_x.png"), 0.85, "CLICK"),
+    # 通常の楽曲選択 → 左下イベントリボンでイベントトップへ
+    ("event_ribbon", os.path.join(SCREENS, "songselect", "event_ribbon.png"), 0.80, "CLICK"),
+    # 「前回のライブ結果を表示しますか？」（強制終了の後遺症）→ **いいえ**
+    # （はい側は連続ライブ再プレイ確認の「はい」とボタンが同形で誤爆し、通常ライブを
+    #   開始してしまうため、復旧中のこの種のダイアログは常に「いいえ」で抜ける）
+    ("prevres_no", os.path.join(SCREENS, "prev_result_dialog", "id_text.png"), 0.85, "CLICKOFF", (-61, 76)),
+    # 連続ライブ再プレイ確認 → いいえ（復旧中に勝手にライブを始めない）
+    ("replay_no", os.path.join(TEMPLATES, "replay_title.png"), 0.82, "CLICKOFF", (-39, 125)),
     ("dl_download", os.path.join(SCREENS, "dldialog", "download_btn.png"), 0.85, "CLICK"),
     ("news_close", os.path.join(SCREENS, "news", "close_x.png"), 0.85, "CLICK"),
     ("home_live", os.path.join(SCREENS, "home", "nav_live.png"), 0.85, "CLICK"),
@@ -82,7 +96,10 @@ STEPS = [
 def main():
     force_quit_game()
     relaunch_game()
-    tmpl = {n: load(p) for n, p, _, _ in STEPS if p}
+    steps = [(s + ((None,),))[:5] if len(s) == 4 else s for s in STEPS]
+    steps = [(n, p, t, a, (o if isinstance(o, tuple) and len(o) == 2 else None))
+             for n, p, t, a, o in steps]
+    tmpl = {n: load(p) for n, p, _, _, _ in steps if p}
     bright_streak = 0
     t0 = time.time()
     while time.time() - t0 < 300:
@@ -91,7 +108,7 @@ def main():
         time.sleep(0.7)
         frames.append(grab_bgr())
         acted = False
-        for name, path, thr, action in STEPS:
+        for name, path, thr, action, off in steps:
             if path is None:
                 continue
             best = (0.0, None)
@@ -103,10 +120,12 @@ def main():
             if score >= thr and pos is not None:
                 print(f"[recover] {name} score={score:.2f}", flush=True)
                 if action == "DONE":
-                    print("[recover] songselect reached — SUCCESS", flush=True)
+                    print("[recover] event songselect reached — SUCCESS", flush=True)
                     return 0
                 if action == "CLICK":
                     click_px(pos, frames[-1])
+                elif action == "CLICKOFF":
+                    click_px((pos[0] + off[0], pos[1] + off[1]), frames[-1])
                 elif action == "CENTER":
                     click_frac(0.5, 0.55)
                 acted = True

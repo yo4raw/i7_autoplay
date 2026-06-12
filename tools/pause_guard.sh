@@ -14,7 +14,12 @@ while :; do
   # ログ行頭の経過秒 [ 123.4s] を使い、最終行から60秒以内の PAUSE→再開 行を数える
   n=$(python3 - "$LOG" <<'EOF'
 import re, sys
-lines = open(sys.argv[1], errors="ignore").readlines()[-200:]
+lines = open(sys.argv[1], errors="ignore").readlines()[-400:]
+# 複数 run が混在すると経過秒が巻き戻るため、最後の「自動周回を開始」以降だけを見る
+for i in range(len(lines) - 1, -1, -1):
+    if "自動周回を開始" in lines[i]:
+        lines = lines[i:]
+        break
 ts = [float(m.group(1)) for l in lines if (m := re.match(r"\[\s*([0-9.]+)s\]", l)) and "PAUSE → 再開" in l]
 allts = [float(m.group(1)) for l in lines if (m := re.match(r"\[\s*([0-9.]+)s\]", l))]
 print(sum(1 for t in ts if allts and allts[-1] - t <= 60))

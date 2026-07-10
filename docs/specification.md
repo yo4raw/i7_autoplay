@@ -996,6 +996,36 @@ iPhone 16 ≈ 671×348(≈19.5:9・全画面)。座標は内容矩形相対＋�
 切断後は全滅）。再接続セッションの個体差/iPhone 状態依存の可能性。**再発時はまず iPhone を再起動**し、
 ダメなら本セクションの総当たり結果を踏まえ Mac 側ではなく iPhone/ミラーリング側を疑うこと。
 
+### 17.11 ハイブリッド打鍵方式: track種別先読み＋円自動キャリブレーション（2026-07-10 実装・実機検証待ち）
+
+設計書: `docs/superpowers/specs/2026-07-10-live-engine-hybrid-design.md`（承認済み・案B）。
+打鍵の「いつ」は実績ある roi スパイク検出（§17.5, lead=0.025 較正済み）を温存し、
+「なに」を `note_engine` の track（スポーン検出→追跡→色種別/レーン/ETA 推定）で先読みする。
+**両フラグとも既定OFF**で、OFF時のコードパスは従来と同一（無回帰）。
+
+- **`--predict`（種別先読み）**: `Tracker`＋`TypeForecast`（レーン別予報）を roi と同じ
+  フレームで並走させ、roi 発火時に種別で出し分ける。
+  - 赤 → フリック（`_flick`。`--flick` の到達直前検色と OR）
+  - 緑 → **次の緑まで長押し**（§17.9 のチェーン仕様）。解除は保持中の輝度でなく
+    **対の緑の ETA 予測時刻**（旧 `--holds` がタップ波紋と交絡した失敗要因を回避）。
+    上限 `HOLD_MAX_SEC` で必ず離す。単一カーソル制約によりホールド中は他レーンを
+    叩けない（EASY では並行ノーツは稀・チェーン尻尾の MISS 削減の利得が勝る想定）
+  - 青/白/予報なし/予報が古い → 通常タップ（現行動作）
+  - 予報は eta_at+猶予0.35s で破棄（追跡帯 `FIELD_Y1`=0.62 を抜けた後の到達待ちに対応）。
+    track の例外・欠落は全て通常タップに劣化し周回は止めない（フェイルソフト）
+- **`--auto-circles`（機種非依存化）**: ライブ突入時に下帯（content y≥0.50）の円リングを
+  `HoughCircles` で検出し、prior（現行 `CIRCLES`）と**4円すべて**が許容誤差
+  （content相対 0.06）内で一致したときだけ実測値へ in-place 置換。失敗時は現行値を維持し
+  次のライブ突入時に再試行（SE実フレーム78枚の実測で単発フルマッチ率 86%）。
+  精度不良の主因＝CIRCLES ズレ（改訂 0.10）への恒久対策。
+  オフライン確認: `python tools/note_engine.py circles <frame.png> [out.png]`
+- **テスト**: `tests/`（unittest, 実機不要の合成フレーム）＋実フレームコーパス
+  `tests/corpus_raw/`（未コミット・あればスモーク）。実行:
+  `.venv/bin/python -m unittest discover -s tests`
+- **実機検証手順**（マージ前に実施。設計書 §8）: ①フラグなしで無回帰確認 →
+  ②`note_engine.py live 120` で予報精度観測（読み取り専用）→ ③`--predict` でリザルト比較 →
+  ④`--auto-circles` の補正ログ確認 → ⑤supervisor へ反映
+
 ### 起動方法（PoC）
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
@@ -1023,3 +1053,4 @@ python tools/autolive.py --loops 50 --max-seconds 7200
 | 0.11 | 2026-06-07 | **ノーツ種別: 赤=フリック実装**（`--flick`, supervisor反映済み）。timingエンジンに到達直前ROIの色検出を追加（円と中心の間 fraction0.65 で R-G>40,R-B>40 を赤と判定 `_approach_red`）→赤ノーツで外向きスワイプ `_flick`。実測 MISS 14→3・BAD 10→6・PERFECT 82→98・COMBO 11→42・SCORE 212k→268k。色は飛行中のみ判別可（到達点は白飛び, §17.9）。緑/青(ホールド/スライドのチェーン)は青白ノーツとの判別が要作り込みで次の課題。`tools/color_probe.py`で検色 |
 | 0.12 | 2026-06-08 | **iOSバッテリー残量低下警告の自動クローズ**を追加（`battery`状態, `battery_close.png`）。残量低下警告は数値非依存の「閉じる」テンプレで検出→「閉じる」を押す（**低電力モードは押さない**）。放置すると未知画面で安全停止しループ停止するため。バッテリー自体は要充電（残20%警告を実機で確認）|
 | 0.13 | 2026-06-08 | **再接続後にPAUSE多発が再燃（§17.10）**。§17.8 とは別物で、activate していない（最前面のまま）のに約5秒ごとにPAUSE。`trigger_test.py` で全入力方式が全滅（tap/touchclick/realclick/iohid_move、各〜5秒でPAUSE）、ミラーリングのクリーン再起動も無効、低電力モード/Mac権限/再起動は否定（同一起動セッション）。結論=再接続セッションで合成入力が genuine と認識されない iPhone 本体側の状態。**復旧は iPhone 本体の電源再投入が最有力**。Mac 側の打ち手は出尽くし |
+| 0.14 | 2026-07-10 | **ハイブリッド打鍵方式を実装（§17.11, 実機検証待ち）**。`--predict`=track種別先読み（緑ホールドはETA駆動解除・赤フリック・不調時タップ劣化）、`--auto-circles`=円自動キャリブレーション（4円全一致時のみ置換・失敗時再試行）。note_engine に TypeForecast/detect_circles/match_circles/`circles`CLI を追加、LANES を補正後円座標に同期し lanes をパラメータ化。unittest スイート新設（合成フレーム・実機不要）。両フラグ既定OFFで無回帰 |

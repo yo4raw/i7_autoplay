@@ -144,14 +144,15 @@ ANCH_DOWNLOAD = (55.0, 84.0)      # DL本文 → ダウンロード
 ANCH_STORY_NO = (-68.0, 76.0)     # ストーリー本文 → いいえ
 ANCH_KINAKO = (128.0, 62.0)       # ライフが足りません → きなこパン「回復」（上段。ステラ下段は触らない）
 ANCH_RANKUP_X = (160.0, -56.0)    # RANK UP! 見出し → ×
+ANCH_LIVEASSIST_START = (203.0, 243.0)  # ライブアシスト見出し → START（アシスト未選択のまま開始＝消費なし）
 
 # ライブのタップ判定円（**4レーン**, 内容相対小数）。中央(0.49,0.93)はSCORE表示と重なる
 # ダミーで実在レーンではないため除外（無駄打ち＋SCOREアニメの誤検出を排除）。
 # note_engine.LANES と同一値に保つこと。
 CIRCLES = [
     (0.16, 0.63), (0.33, 0.85),
-    (0.62, 0.85), (0.74, 0.63),
-]
+    (0.68, 0.85), (0.84, 0.63),   # 右2つ: 実機オーバーレイで左寄りズレを補正(2026-06-07)
+]                                  # 旧 (0.62,0.85)/(0.74,0.63) は右リングより左で右レーン取りこぼし多発
 
 # --- ライブ中の打鍵モード ---
 # "timing": 各円にノーツ（明るい光球）が到達した瞬間を検出してタップ（既定）。
@@ -182,6 +183,13 @@ HOLD_REL_FACTOR = 0.45           # 保持解除のしきい（trigger×これ �
 TRACK_ARRIVE_PX = 34.0           # ノーツがレーン円のこのpx内に来たら打鍵
 TRACK_FORGET_SEC = 6.0           # acted集合を周期クリア（id枯渇/メモリ防止。ライブ跨ぎ）
 KEEPALIVE_GAP_SEC = 0.6          # 無検出がこの秒続いたら genuine 入力を1発（PAUSE防止, 0.7s未満）
+# --- 赤ノーツ=フリック（§17.9）。到達直前ROIで赤を検出 → タップ＋外向きスワイプ ---
+FLICK_APPROACH_FRAC = 0.65       # 円と中心の間の検色点（0=中心,1=円）。0.65で色が出る（白飛び前）
+FLICK_RED_MIN_V = 120            # 検色: 明るい画素の閾値
+FLICK_RED_DELTA = 40             # 明るい画素平均で R-G,R-B がこれ以上なら「赤ノーツ」
+FLICK_RED_MEMORY = 0.35          # 到達直前で赤を見てから、この秒内にタップしたらフリック扱い
+FLICK_DIST = 0.06               # フリック移動量（ウィンドウ幅相対, 外向き）
+FLICK_STEPS = 3                  # フリックのドラッグ分割数
 
 # テンプレ（assets/templates/*.png）。明るさゲートと併用し高閾値照合する。
 # 判定順序は detect() を参照（friendreq → replay → closex → ...）。
@@ -195,6 +203,7 @@ TEMPLATES = {
     "rankup": ("rankup.png", 0.78),            # 「RANK UP!」文字（× フォールバック用）
     "dldialog": ("dl_dialog.png", 0.85),       # データDL確認ダイアログ本文「をダウンロードします。」
     "story": ("story_dialog.png", 0.85),       # 「ストーリー開放チケット…遷移しますか？」→ いいえ
+    "liveassist": ("live_assist.png", 0.85),   # ライブアシスト選択画面 → 何も選ばず START（消費なし）
     # 旧 download_btn.png は「ライブの説明」チュートリアル等を誤検出(0.88)したため撤去。
     # DL確認は dldialog（本文テンプレ, 0.85）でのみ判定する。
     "result": ("result_title.png", 0.55),      # per-song「Result」文字（誤検出は中央タップのみで安全）
@@ -205,7 +214,8 @@ TEMPLATES = {
     "songselect": ("song_select.png", 0.85),   # 楽曲選択画面の「NEXT」ボタン（連戦終了で戻る）
     "friendselect": ("friend_select.png", 0.85),  # フレンド（サポート）選択画面
     "formation": ("formation.png", 0.85),      # 編成画面の「START」ボタン
-}
+    "battery": ("battery_close.png", 0.80),    # iOSバッテリー残量低下警告の「閉じる」ボタン
+}                                              # ※低電力モードは絶対に押さない（閉じるのみ）
 
 # --- LIFE 回復（ユーザー要件: きなこパンで回復・ステラは絶対に使わない） ---
 P_KINAKO_RECOVER = (0.644, 0.508)  # 「ライフが足りません」ダイアログ上段=きなこパンの「回復」
@@ -335,7 +345,7 @@ class AutoLive:
     def __init__(self, max_loops, dry_run=False, verbose=False, max_seconds=None,
                  tap_mode=TAP_MODE_DEFAULT, note_trigger=NOTE_TRIGGER_FRAC,
                  note_lead=NOTE_ROI_LEAD, note_roi=NOTE_ROI_RADIUS, holds=False,
-                 engine="roi", esc_enabled=True):
+                 engine="roi", esc_enabled=True, flick=False):
         self.max_loops = max_loops
         self.dry_run = dry_run
         self.verbose = verbose
@@ -359,6 +369,9 @@ class AutoLive:
         self.note_hi_frames = [0] * len(CIRCLES)  # 円ごとのトリガー超持続フレーム数（長押し検出）
         self.hold_idx = None        # 現在ホールド中の円index（Noneなら非ホールド）
         self.hold_start = 0.0       # ホールド開始時刻（HOLD_MAX_SEC上限用）
+        # --- ノーツ種別対応（赤=フリック）。到達直前ROIの色で判定（§17.9） ---
+        self.flick = flick          # 赤ノーツでフリック（タップ→外向きスワイプ）を行う
+        self.note_red_seen = [0.0] * len(CIRCLES)  # 円ごとに到達直前ROIで赤を見た直近時刻
         # --- 実験的トラッキングエンジン（engine="track"）用 ---
         self.engine = engine        # "roi"(既定・現行) / "track"(スポーン検出+追跡)
         self._ne = None             # note_engine モジュール（遅延import）
@@ -394,6 +407,9 @@ class AutoLive:
     def _click_screen(self, px, py):
         if self.dry_run:
             return
+        mode = os.environ.get("I7_CLICK_MODE", "0")
+        if mode != "0":
+            return self._click_screen_exp(px, py, mode)
         # 実カーソルをクリック点へワープ + MouseMoved + Down/Up を **HIDSystemState
         # イベントソース**で送る。これにより iPhone ミラーリングが「genuine な入力あり」と
         # 判定し、ライブ中の自動 PAUSE を防ぐ（§17.6 F）。実カーソルが動く点に注意。
@@ -407,6 +423,81 @@ class AutoLive:
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, mv)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, dn)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
+
+    def _click_screen_exp(self, px, py, mode):
+        """実験用: genuine入力の方式切替（I7_CLICK_MODE）。PAUSE防止の有効方式探索（§17.7）。"""
+        lpx = getattr(self, "_last_px", px)
+        lpy = getattr(self, "_last_py", py)
+        dx, dy = px - lpx, py - lpy
+        self._last_px, self._last_py = px, py
+        def moved(x, y, ddx=0, ddy=0, tap=Quartz.kCGHIDEventTap):
+            ev = Quartz.CGEventCreateMouseEvent(_HID_SRC, Quartz.kCGEventMouseMoved, (x, y), 0)
+            if ddx or ddy:
+                Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventDeltaX, int(ddx))
+                Quartz.CGEventSetIntegerValueField(ev, Quartz.kCGMouseEventDeltaY, int(ddy))
+            Quartz.CGEventPost(tap, ev)
+        def click(x, y):
+            dn = Quartz.CGEventCreateMouseEvent(_HID_SRC, Quartz.kCGEventLeftMouseDown, (x, y), 0)
+            up = Quartz.CGEventCreateMouseEvent(_HID_SRC, Quartz.kCGEventLeftMouseUp, (x, y), 0)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, dn)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
+        if mode == "delta":              # MouseMoved に実delta を載せる
+            Quartz.CGWarpMouseCursorPosition((px, py))
+            moved(px, py, dx, dy)
+            click(px, py)
+        elif mode == "movepair":         # 2点間を実移動（delta付き）してからクリック
+            mid_x, mid_y = (lpx + px) / 2, (lpy + py) / 2
+            Quartz.CGWarpMouseCursorPosition((mid_x, mid_y))
+            moved(mid_x, mid_y, (px - lpx) / 2, (py - lpy) / 2)
+            Quartz.CGWarpMouseCursorPosition((px, py))
+            moved(px, py, (px - mid_x), (py - mid_y))
+            click(px, py)
+        elif mode == "drag":             # 指のような Down→ドラッグ→Up
+            Quartz.CGWarpMouseCursorPosition((px, py))
+            dn = Quartz.CGEventCreateMouseEvent(_HID_SRC, Quartz.kCGEventLeftMouseDown, (px, py), 0)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, dn)
+            nx, ny = px + 6, py + 6
+            Quartz.CGWarpMouseCursorPosition((nx, ny))
+            dg = Quartz.CGEventCreateMouseEvent(_HID_SRC, Quartz.kCGEventLeftMouseDragged, (nx, ny), 0)
+            Quartz.CGEventSetIntegerValueField(dg, Quartz.kCGMouseEventDeltaX, 6)
+            Quartz.CGEventSetIntegerValueField(dg, Quartz.kCGMouseEventDeltaY, 6)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, dg)
+            up = Quartz.CGEventCreateMouseEvent(_HID_SRC, Quartz.kCGEventLeftMouseUp, (nx, ny), 0)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
+        elif mode == "scroll":           # クリック + スクロールホイール(genuine活動)
+            Quartz.CGWarpMouseCursorPosition((px, py))
+            moved(px, py, dx, dy)
+            click(px, py)
+            sc = Quartz.CGEventCreateScrollWheelEvent(_HID_SRC, Quartz.kCGScrollEventUnitPixel, 1, 1)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, sc)
+        elif mode == "assoc":            # マウス分離→相対move→再結合→クリック
+            Quartz.CGAssociateMouseAndMouseCursorPosition(False)
+            moved(px, py, dx if dx else 5, dy if dy else 5)
+            Quartz.CGAssociateMouseAndMouseCursorPosition(True)
+            Quartz.CGWarpMouseCursorPosition((px, py))
+            click(px, py)
+        elif mode == "session":          # Session+HID 両tapに送る
+            Quartz.CGWarpMouseCursorPosition((px, py))
+            moved(px, py, dx, dy, tap=Quartz.kCGSessionEventTap)
+            moved(px, py, dx, dy)
+            click(px, py)
+        elif mode == "none":             # F以前の方式: source=None でクリック
+            Quartz.CGWarpMouseCursorPosition((px, py))
+            for et in (Quartz.kCGEventMouseMoved, Quartz.kCGEventLeftMouseDown,
+                       Quartz.kCGEventLeftMouseUp):
+                ev = Quartz.CGEventCreateMouseEvent(None, et, (px, py), 0)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+        elif mode == "key":              # baselineクリック + F13キー(無害)で genuine 入力
+            Quartz.CGWarpMouseCursorPosition((px, py))
+            moved(px, py, dx, dy)
+            click(px, py)
+            for down in (True, False):
+                ke = Quartz.CGEventCreateKeyboardEvent(_HID_SRC, 105, down)  # F13
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, ke)
+        else:                            # 不明mode→baseline相当
+            Quartz.CGWarpMouseCursorPosition((px, py))
+            moved(px, py)
+            click(px, py)
 
     def _press(self, px, py, kind):
         """ホールド用に down/move/up を個別に送る（HIDソース＋ワープで genuine 入力）。
@@ -474,6 +565,41 @@ class AutoLive:
         white = (roi.min(axis=2) > NOTE_WHITE_V)
         return float(white.mean())
 
+    def _approach_red(self, frame, idx):
+        """円 idx の到達直前ROI（中心寄り FLICK_APPROACH_FRAC）に赤ノーツ（=フリック）が
+        あるか。frame は RGB。明るい画素平均で R が G,B より十分大きければ赤とみなす。"""
+        h, w = frame.shape[:2]
+        xf, yf = CIRCLES[idx]
+        xf = xf + (ARC_CENTER[0] - xf) * (1 - FLICK_APPROACH_FRAC)
+        yf = yf + (ARC_CENTER[1] - yf) * (1 - FLICK_APPROACH_FRAC)
+        top, bottom = self.content; ch = bottom - top
+        cx = int(self.win["w"] * xf); cy = int(top + yf * ch)
+        r = int(self.win["w"] * self.note_roi)
+        x0, y0, x1, y1 = max(0, cx - r), max(0, cy - r), min(w, cx + r), min(h, cy + r)
+        if x1 <= x0 or y1 <= y0:
+            return False
+        roi = frame[y0:y1, x0:x1].reshape(-1, 3).astype(int)
+        bright = roi[roi.max(axis=1) > FLICK_RED_MIN_V]
+        if len(bright) < 8:
+            return False
+        rr, gg, bb = bright.mean(axis=0)
+        return (rr - gg) > FLICK_RED_DELTA and (rr - bb) > FLICK_RED_DELTA
+
+    def _flick(self, idx):
+        """円 idx で フリック: 押下→外向き(中心と反対)へドラッグ→離す。種別=赤ノーツ用。"""
+        sx, sy = self.content_to_screen(*CIRCLES[idx])
+        # 外向き方向（ARC_CENTER から円へ向かうベクトル）
+        cxs, cys = self.content_to_screen(*ARC_CENTER)
+        dx, dy = sx - cxs, sy - cys
+        norm = (dx * dx + dy * dy) ** 0.5 or 1.0
+        dist = self.win["w"] * FLICK_DIST
+        ux, uy = dx / norm * dist, dy / norm * dist
+        self._press(sx, sy, "down")
+        for s in range(1, FLICK_STEPS + 1):
+            self._press(sx + ux * s / FLICK_STEPS, sy + uy * s / FLICK_STEPS, "move")
+            time.sleep(0.012)
+        self._press(sx + ux, sy + uy, "up")
+
     def _note_present(self, frame, idx):
         """円 idx にノーツが到達したか（過渡的な明るさの跳ね上がりで判定）。
         円ごとのEMAベースライン（静穏時のみ更新）に対し note_trigger を超えたら True。"""
@@ -507,6 +633,12 @@ class AutoLive:
                 self.note_hi_frames[i] = 0
                 if wf[i] < NOTE_BASELINE_FRAC:  # 静穏時のみベースライン取り込み
                     self.note_baseline[i] = base + (wf[i] - base) * NOTE_BASELINE_EMA
+
+        # 1.5) 到達直前ROIの色で赤ノーツ（フリック）を先読み。直近で赤を見た円を記録。
+        if self.flick:
+            for i in range(len(CIRCLES)):
+                if self._approach_red(frame, i):
+                    self.note_red_seen[i] = now
 
         # 2) ホールド継続中: その円が明るい限り押下保持（drag=genuine入力でPAUSE防止）。
         #    明るさが引いた or 上限超で離す（誤検出でも HOLD_MAX_SEC で必ず離れる）。
@@ -545,7 +677,12 @@ class AutoLive:
                     self.log(f"長押し開始 円{i}")
                 tapped = True
                 break
-            self.click_content(*CIRCLES[i])  # 通常タップ（down+up）
+            if self.flick and (now - self.note_red_seen[i]) < FLICK_RED_MEMORY:
+                self._flick(i)  # 赤ノーツ → タップ＋外向きフリック
+                if self.verbose:
+                    self.log(f"フリック 円{i}（赤検出）")
+            else:
+                self.click_content(*CIRCLES[i])  # 通常タップ（down+up）
             self.note_last_tap[i] = now
             self.last_input_ts = now
             tapped = True
@@ -596,10 +733,23 @@ class AutoLive:
             self.click_content(cx, cy)
             self.last_input_ts = now
 
+    def _mirror_is_front(self):
+        """iPhoneミラーリングが最前面か。NSWorkspace の frontmostApplication で判定。"""
+        try:
+            from AppKit import NSWorkspace
+            a = NSWorkspace.sharedWorkspace().frontmostApplication()
+            n = (a.localizedName() or "") if a else ""
+            return ("Mirroring" in n) or ("ミラーリング" in n)
+        except Exception:
+            return False
+
     def _keep_front(self, interval=0.4):
+        # **最前面なら再アクティブ化しない**。ミラーリングの再アクティブ化(activate)は
+        # ライブ中にゲームを PAUSE させるため（端末により顕著）、最前面を失った時だけ復帰させる。
+        # 詳細は docs/specification.md §17.8（PAUSE は activate 連打が主因と判明）。
         now = time.time()
         if now - self.last_activate > interval:
-            if not self.dry_run:
+            if not self.dry_run and not self._mirror_is_front():
                 driver.activate_fast()
             self.last_activate = now
 
@@ -654,6 +804,9 @@ class AutoLive:
         if m("pause"):
             return "pause", res
         # --- 明るいメニュー画面（順序が重要） ---
+        # iOSバッテリー残量低下警告は最優先で「閉じる」（放置すると未知画面で安全停止しループ停止）。
+        if m("battery"):
+            return "battery", res
         # LIFE不足ダイアログは最優先で判定（誤って盲目タップしステラを押さないため）。
         if m("lifeshort"):
             return "lifeshort", res
@@ -670,6 +823,10 @@ class AutoLive:
         # ストーリー遷移確認（×無し・いいえ/はい）も closex より先に判定して「いいえ」で閉じる。
         if m("story"):
             return "story", res
+        # ライブアシスト選択（formation START 後に出ることがある）。アイテムを選ばず START で
+        # 開始すれば消費ゼロ。formation/カード色検出より先に確定する。
+        if m("liveassist"):
+            return "liveassist", res
         # 編成画面（START ボタンが明確に見える）は popup ではない。イベントテーマの帯を
         # detect_card_x が誤ってカードヘッダ扱いし cardx 誤検出→停止していたため、色ヒュー
         # リスティックより先に START テンプレで確定する（modal popup なら START は隠れて落ちる）。
@@ -750,6 +907,11 @@ class AutoLive:
                 self.log("PAUSE → 再開")
                 self.click_anchor(res["pause"][2], ANCH_RESUME)
                 time.sleep(0.4)
+            elif state == "battery":
+                # iOSバッテリー残量低下警告 → 「閉じる」のみ押す（低電力モードは絶対に押さない）。
+                self.log("バッテリー警告 → 閉じる（充電推奨）")
+                self.click_match(res["battery"][2])
+                time.sleep(0.6)
             elif state == "lifeshort":
                 # LIFE不足ダイアログ。**きなこパンで回復し、ステラは絶対に使わない**。
                 # きなこパン1個(+20) → 確認ポップアップ → ×で閉じる、を1手順で行う。
@@ -904,6 +1066,11 @@ class AutoLive:
                 self.log("ストーリー遷移確認 → いいえ")
                 self.click_anchor(res["story"][2], ANCH_STORY_NO)
                 time.sleep(0.8)
+            elif state == "liveassist":
+                # ライブアシスト選択 → **何も選ばず START**（アイテム消費なしでライブ開始）。
+                self.log("ライブアシスト → 未選択のままSTART")
+                self.click_anchor(res["liveassist"][2], ANCH_LIVEASSIST_START)
+                time.sleep(1.2)
             elif state in ("result", "eventresult"):
                 # per-song Result / EVENT RESULT。クリア計上し、中央タップで送る。
                 now = time.time()
@@ -1007,6 +1174,8 @@ def main():
     ap.add_argument("--holds", action="store_true",
                     help="長押し（緑）対応を有効化（実験的。明るさ持続で検出するがタップ波紋に"
                          "誤反応しやすく既定では無効）")
+    ap.add_argument("--flick", action="store_true",
+                    help="赤ノーツでフリック（到達直前ROIで赤検出→タップ＋外向きスワイプ）。§17.9")
     ap.add_argument("--engine", choices=["roi", "track"], default="roi",
                     help="ライブ中の打鍵エンジン。roi=現行(到達点の明るさ・安定)、"
                          "track=実験(スポーン検出+追跡)。既定 roi")
@@ -1020,7 +1189,7 @@ def main():
              max_seconds=args.max_seconds, tap_mode=args.tap_mode,
              note_trigger=args.note_trigger, note_lead=args.note_lead,
              note_roi=args.note_roi, holds=args.holds, engine=args.engine,
-             esc_enabled=not args.no_esc).run()
+             esc_enabled=not args.no_esc, flick=args.flick).run()
 
 
 if __name__ == "__main__":

@@ -26,11 +26,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 # 注: autolive とは相互利用するため、ここでは **import しない**（循環import回避）。
 # autolive 側が note_engine を import する。CLI関数内でのみ autolive を遅延importする。
 
-# --- フィールド模型（content矩形相対の小数。autolive.CIRCLES と同一値を持つ） ---
-# タップ円5箇所（中央 index2 はダミー＝SCORE表示と重なる）。autolive.CIRCLES と一致させること。
-CIRCLES = [(0.16, 0.63), (0.33, 0.85), (0.49, 0.93), (0.62, 0.85), (0.74, 0.63)]
-# 4レーン = 中央(index2)を除いた4箇所（左端/左下/右下/右端）。
-LANES = [CIRCLES[0], CIRCLES[1], CIRCLES[3], CIRCLES[4]]
+# --- フィールド模型（content矩形相対の小数） ---
+# 4レーンのタップ円（x=ウィンドウ幅相対 / y=content高相対）。
+# autolive.CIRCLES（右2円ズレ補正 2026-06-07 済み）と同値。autolive からは
+# Tracker(..., lanes=CIRCLES)/detect_notes(..., lanes=CIRCLES) で実値（自動
+# キャリブレーション後を含む）が渡されるため、これは単体CLI用の既定値。
+LANES = [(0.16, 0.63), (0.33, 0.85), (0.68, 0.85), (0.84, 0.63)]
 DARK_THRESH = 65.0  # autolive と同値（live判定用）
 # ノーツのスポーン中心（上部中央。実測でノーツ群が湧く位置。content相対）。
 # 実測: ノーツ track の開始は y_px≈55（content相対≈0.06）、x≈336（≈0.50）。
@@ -49,7 +50,7 @@ def _content_geom(win, content):
     return win["w"], top, (bottom - top)
 
 
-def detect_notes(frame_rgb, win, content):
+def detect_notes(frame_rgb, win, content, lanes=None):
     """1フレームからノーツ候補ブロブを検出して返す。
     戻り値: list of dict(x,y[px], lane, color, area, rgb)。x,yはフレームpx。"""
     W, top, ch = _content_geom(win, content)
@@ -75,7 +76,7 @@ def detect_notes(frame_rgb, win, content):
             "x": cx, "y": cy, "area": area,
             "rgb": tuple(int(v) for v in rgb),
             "color": classify_color(rgb),
-            "lane": assign_lane(cx, cy, win, content),
+            "lane": assign_lane(cx, cy, win, content, lanes),
         })
     return out
 
@@ -96,7 +97,7 @@ def classify_color(rgb):
     return "white"
 
 
-def assign_lane(cx, cy, win, content):
+def assign_lane(cx, cy, win, content, lanes=None):
     """ブロブのスポーンからの方向に最も近いレーンindexを返す（放射移動を仮定）。"""
     W, top, ch = _content_geom(win, content)
     sx, sy = W * SPAWN[0], top + SPAWN[1] * ch
@@ -106,7 +107,7 @@ def assign_lane(cx, cy, win, content):
     import math
     ang = math.atan2(vy, vx)
     best, bi = 1e9, -1
-    for i, (lxf, lyf) in enumerate(LANES):
+    for i, (lxf, lyf) in enumerate(LANES if lanes is None else lanes):
         lx, ly = W * lxf, top + lyf * ch
         la = math.atan2(ly - sy, lx - sx)
         d = abs((ang - la + math.pi) % (2 * math.pi) - math.pi)
@@ -124,12 +125,13 @@ class Tracker:
     MOVE_DISP = 30.0     # これ以上動いた track を「動くもの」とみなす
     OUTWARD_MIN = 18.0   # スポーンから外側へこれ以上進んだら note 候補
 
-    def __init__(self, win, content):
+    def __init__(self, win, content, lanes=None):
         self.win = win
         self.content = content
+        self.lanes = list(lanes) if lanes else list(LANES)
         W, top, ch = _content_geom(win, content)
         self.sx, self.sy = W * SPAWN[0], top + SPAWN[1] * ch
-        self.lane_px = [(W * xf, top + yf * ch) for xf, yf in LANES]
+        self.lane_px = [(W * xf, top + yf * ch) for xf, yf in self.lanes]
         self.tracks = {}   # id -> dict
         self._nid = 0
 

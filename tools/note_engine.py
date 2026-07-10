@@ -207,6 +207,71 @@ class Tracker:
                 "eta": eta, "speed": speed, "type": ntype, "pos": (p1[1], p1[2])}
 
 
+FORECAST_STALE_SEC = 0.6   # ETA不明の予報を最後の目撃からこの秒数で破棄
+FORECAST_GRACE_SEC = 0.35  # 到達予測を過ぎてもこの猶予内は保持（追跡帯を抜けた後の到達待ち）
+
+
+class TypeForecast:
+    """レーン別の「次に到達するノーツ」予報。Tracker の annotation を毎フレーム取り込み、
+    roi 発火時に peek/consume で種別と到達予測を返す。予報は「あれば使う」情報で
+    発火判定には関与しない（不調時は呼び出し側が通常タップに劣化＝フェイルソフト）。
+    注: 追跡帯（FIELD_Y1）を抜けてから円到達まで track は見えないため、
+    破棄は last_seen でなく eta_at+grace を優先する。"""
+
+    def __init__(self, n_lanes=4, stale_sec=FORECAST_STALE_SEC,
+                 grace_sec=FORECAST_GRACE_SEC):
+        self.n_lanes = n_lanes
+        self.stale_sec = stale_sec
+        self.grace_sec = grace_sec
+        self.entries = {}  # track_id -> {"lane","type","eta_at","last_seen"}
+
+    def update(self, annotations, now):
+        for a in annotations:
+            if not a.get("is_note") or not (0 <= a.get("lane", -1) < self.n_lanes):
+                continue
+            eta_at = (now + a["eta"]) if a.get("eta") is not None else None
+            self.entries[a["id"]] = {"lane": a["lane"], "type": a["type"],
+                                     "eta_at": eta_at, "last_seen": now}
+        for tid in [t for t, e in self.entries.items() if self._expired(e, now)]:
+            del self.entries[tid]
+
+    def _expired(self, e, now):
+        if e["eta_at"] is not None:
+            return now > e["eta_at"] + self.grace_sec
+        return now - e["last_seen"] > self.stale_sec
+
+    def _nearest(self, lane, now):
+        best_id, best_key = None, None
+        for tid, e in self.entries.items():
+            if e["lane"] != lane:
+                continue
+            key = e["eta_at"] if e["eta_at"] is not None else float("inf")
+            if best_key is None or key < best_key:
+                best_id, best_key = tid, key
+        return best_id
+
+    def peek(self, lane, now):
+        tid = self._nearest(lane, now)
+        return self.entries[tid] if tid is not None else None
+
+    def consume(self, lane, now):
+        tid = self._nearest(lane, now)
+        return self.entries.pop(tid) if tid is not None else None
+
+    def next_eta_at(self, lane, now, ntype=None):
+        """lane で次に到達するノーツ（ntype 指定時はその種別のみ）の到達予測時刻。
+        緑ホールドの解除時刻（対の緑の到達）に使う。無ければ None。"""
+        best = None
+        for e in self.entries.values():
+            if e["lane"] != lane or e["eta_at"] is None:
+                continue
+            if ntype is not None and e["type"] != ntype:
+                continue
+            if best is None or e["eta_at"] < best:
+                best = e["eta_at"]
+        return best
+
+
 def _track(dirpath):
     """連番フレームを Tracker に通し、検出された動くノーツ（レーン/ETA/種別）を集計。"""
     import glob

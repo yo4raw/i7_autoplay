@@ -207,6 +207,54 @@ class Tracker:
                 "eta": eta, "speed": speed, "type": ntype, "pos": (p1[1], p1[2])}
 
 
+# --- タップ円の自動キャリブレーション（--auto-circles, 機種非依存化） ---
+CIRCLE_BAND_Y0 = 0.50      # 円検出の下帯（content相対yの開始）
+CIRCLE_MATCH_TOL = 0.06    # prior との許容誤差（content相対距離）
+CIRCLE_R_FRAC = 0.05       # 円リング半径の目安（ウィンドウ幅相対。SE実測 ~26px/529w）
+
+
+def detect_circles(frame_rgb, win, content):
+    """下帯からタップ円リングを Hough 検出して content相対 [(xf,yf),...] を返す。
+    誤検出は match_circles 側で弾く前提のゆるい検出。"""
+    W, top, ch = _content_geom(win, content)
+    h, w = frame_rgb.shape[:2]
+    y0 = int(top + CIRCLE_BAND_Y0 * ch)
+    band = frame_rgb[max(0, y0):h]
+    if band.size == 0:
+        return []
+    gray = cv2.cvtColor(band, cv2.COLOR_RGB2GRAY)
+    gray = cv2.medianBlur(gray, 5)
+    r_est = max(8, int(W * CIRCLE_R_FRAC))
+    found = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1.2,
+                             minDist=int(W * 0.10), param1=120, param2=30,
+                             minRadius=int(r_est * 0.6), maxRadius=int(r_est * 1.6))
+    out = []
+    if found is not None:
+        for cx, cy, r in found[0]:
+            out.append((float(cx) / W, (float(cy) + y0 - top) / ch))
+    return out
+
+
+def match_circles(detected, prior, tol=CIRCLE_MATCH_TOL):
+    """検出円を prior（現行CIRCLES）へ最近傍マッチ。**全 prior が tol 内で1対1に
+    埋まったときだけ** prior と同順の補正リストを返す。埋まらなければ None
+    （呼び出し側は現行値を維持する＝誤検出で悪化させない）。"""
+    result, used = [], set()
+    for pxf, pyf in prior:
+        best_j, best_d = -1, tol
+        for j, (dxf, dyf) in enumerate(detected):
+            if j in used:
+                continue
+            d = ((dxf - pxf) ** 2 + (dyf - pyf) ** 2) ** 0.5
+            if d < best_d:
+                best_j, best_d = j, d
+        if best_j < 0:
+            return None
+        used.add(best_j)
+        result.append(detected[best_j])
+    return result
+
+
 FORECAST_STALE_SEC = 0.6   # ETA不明の予報を最後の目撃からこの秒数で破棄
 FORECAST_GRACE_SEC = 0.35  # 到達予測を過ぎてもこの猶予内は保持（追跡帯を抜けた後の到達待ち）
 
@@ -362,6 +410,35 @@ def _viz(frame_path, out_path):
         print(f'  lane{nt["lane"]} {nt["color"]:5} rgb{nt["rgb"]} area{nt["area"]} @({nt["x"]:.0f},{nt["y"]:.0f})')
 
 
+def _circles(frame_path, out_path):
+    """円自動検出の可視化: 検出円(黄)・prior LANES(緑)・マッチ結果(赤) を重ね描き。"""
+    from PIL import Image, ImageDraw
+    import autolive as A  # 遅延import（循環回避）
+    al = A.AutoLive(1, dry_run=True)
+    frame = np.array(Image.open(frame_path).convert("RGB"))
+    det = detect_circles(frame, al.win, al.content)
+    prior = list(A.CIRCLES)
+    matched = match_circles(det, prior)
+    im = Image.open(frame_path).convert("RGB")
+    d = ImageDraw.Draw(im)
+    W, top, ch = _content_geom(al.win, al.content)
+
+    def draw(pts, color, r):
+        for xf, yf in pts:
+            x, y = W * xf, top + yf * ch
+            d.ellipse([x - r, y - r, x + r, y + r], outline=color, width=2)
+
+    draw(det, (255, 255, 0), 10)
+    draw(prior, (0, 255, 0), 14)
+    if matched:
+        draw(matched, (255, 60, 60), 6)
+    im.save(out_path)
+    print(f"detected={len(det)} matched={'OK' if matched else 'None(維持)'} -> {out_path}")
+    for i, p in enumerate(prior):
+        m = f"{matched[i][0]:.3f},{matched[i][1]:.3f}" if matched else "-"
+        print(f"  prior{i} ({p[0]:.3f},{p[1]:.3f}) -> {m}")
+
+
 def _scan(dirpath):
     import glob
     from PIL import Image
@@ -392,6 +469,8 @@ def main():
         _track(sys.argv[2])
     elif cmd == "live":
         _live(float(sys.argv[2]) if len(sys.argv) > 2 else 60.0)
+    elif cmd == "circles":
+        _circles(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "/tmp/i7_circles.png")
     else:
         print(__doc__)
 

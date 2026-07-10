@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "screen_type": {
+      "type": "string",
+      "enum": ["result", "event_result", "not_result"],
+      "description": "楽曲リザルト / EVENT RESULT / リザルト画面ではない"
+    },
+    "animating": {
+      "type": "boolean",
+      "description": "数値がカウントアップ等のアニメーション途中に見えるとき true（撮り直し推奨）"
+    },
+    "score": { "type": ["integer", "null"], "description": "SCORE（カンマ除去済み整数）" },
+    "perfect": { "type": ["integer", "null"] },
+    "great": { "type": ["integer", "null"] },
+    "good": { "type": ["integer", "null"] },
+    "bad": { "type": ["integer", "null"] },
+    "miss": { "type": ["integer", "null"] },
+    "max_combo": { "type": ["integer", "null"] },
+    "rank": {
+      "type": ["string", "null"],
+      "description": "クリアランクの表記そのまま大文字（例: SS）。見えなければ null"
+    },
+    "event_pt": {
+      "type": ["integer", "null"],
+      "description": "EVENT RESULT の獲得イベントpt（カンマ除去済み整数）"
+    },
+    "boost_multiplier": {
+      "type": ["integer", "null"],
+      "description": "ブースト倍率の数字（×3 なら 3）。表示が見えなければ null"
+    },
+    "notes": {
+      "type": "string",
+      "description": "null にした項目の理由や読み取りの注意点。特になければ空文字"
+    }
+  },
+  "required": ["screen_type", "animating", "score", "perfect", "great", "good", "bad", "miss", "max_combo", "rank", "event_pt", "boost_multiplier", "notes"],
+  "additionalProperties": false
+}

@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "properties": {
+    "matches_expected": {
+      "type": "boolean",
+      "description": "表示中の画面が期待する画面と一致するか（ポップアップが被っていれば false）"
+    },
+    "screen_description": {
+      "type": "string",
+      "description": "実際に表示されている画面の1〜2文の説明（日本語）"
+    },
+    "blocking_popup": {
+      "type": ["string", "null"],
+      "description": "期待画面に被さっているポップアップの内容。無ければ null"
+    },
+    "target_found": {
+      "type": "boolean",
+      "description": "探している要素が画面内に見えるか"
+    },
+    "target_x": {
+      "type": ["number", "null"],
+      "description": "要素中心のx（ウィンドウ相対 0..1）。target_found が false なら null"
+    },
+    "target_y": {
+      "type": ["number", "null"],
+      "description": "要素中心のy（ウィンドウ相対 0..1）。target_found が false なら null"
+    },
+    "caution": {
+      "type": ["string", "null"],
+      "description": "ステラ/課金要素の存在やタップ前の注意。無ければ null"
+    }
+  },
+  "required": ["matches_expected", "screen_description", "blocking_popup", "target_found", "target_x", "target_y", "caution"],
+  "additionalProperties": false
+}

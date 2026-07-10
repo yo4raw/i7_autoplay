@@ -122,3 +122,25 @@ python tools/driver.py swipe <x1> <y1> <x2> <y2>
 テンプレ取得: `driver.py shot`/`clickshot` でネイティブ解像度クロップ。しきい値は `TEMPLATES`、
 オフセットはファイル先頭付近の定数（`ANCH_*`, `OFF_*`, `CLOSEX_OFFSETS`）。ESCキルスイッチは
 誤検出デバウンス（2回連続検出で停止）。
+
+## LLM copilot（廉価モデル併用の無人運用）の起動方法
+
+プロンプト資産は `assets/prompts/`（**Fable 5 作成済み。実装・運用時に書き直さずそのまま使う**。
+使い方と API 注意点は同ディレクトリの `README.md`、設計は
+`docs/superpowers/specs/2026-07-10-llm-copilot-design.md`）。
+
+- **監視・復旧スーパーバイザー（Phase 3）**: このリポジトリで Claude Code セッションを開き
+  （モデルは Haiku/Sonnet で足りる）、次を指示する:
+  `assets/prompts/supervisor_loop.md を読み、その指示に従って /loop で監視して`
+  （自己ペース /loop、目安 20 分間隔）。正常周回中は何もしないのが規律。
+  従来の `nohup tools/supervise_autolive.sh <target_epoch> &` と併用可（プロセス再起動は
+  シェル側、状況判断・通知は LLM 側）。
+- **イベント導線ナビ（Phase 4）**: ゲームがホーム画面にあるとき、Claude Code セッションで:
+  `assets/prompts/event_navigation.md を読み、ホームからイベントライブ開始まで進めて`
+  （**LIVE ボタン経由は通常ライブで pt 無効。左下イベントリボン→EASY→ブースト×3 必須**）。
+  ライブが始まったら従来どおり `python tools/autolive.py --loops N` を起動。
+- **未知画面対処・リザルトOCR（Phase 1-2）**: copilot モジュールとして実装予定（未実装）。
+  実装時は `screen_triage.*` / `result_ocr.*` を読み込み、`README.md` 記載の
+  多重防御検証（禁止語拒否・stella_risk 制限・試行上限）を必ずコード側に入れること。
+- 認証: `ANTHROPIC_API_KEY` または `ant auth login`。API/LLM が落ちても従来の
+  安全停止に劣化するだけで、周回の安全性は LLM に依存しない設計を維持すること。

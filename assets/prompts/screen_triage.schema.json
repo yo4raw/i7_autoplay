@@ -1,0 +1,84 @@
+{
+  "type": "object",
+  "properties": {
+    "screen": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["known", "unknown"],
+          "description": "既知画面カタログに一致するなら known"
+        },
+        "state": {
+          "type": ["string", "null"],
+          "description": "known のとき: pause/gameplay/lifeshort/friendreq/replay/rankup/dldialog/story/result/eventresult/songselect/friendselect/formation/liveassist/battery/cardx のいずれか。unknown のとき null"
+        },
+        "screen_id": {
+          "type": ["string", "null"],
+          "description": "unknown のとき: 画面の見出しから決めた安定スラッグ（英小文字とアンダースコア）。known のとき null"
+        },
+        "description": {
+          "type": "string",
+          "description": "画面に何が表示されているかの1〜2文の説明（日本語）"
+        }
+      },
+      "required": ["kind", "state", "screen_id", "description"],
+      "additionalProperties": false
+    },
+    "stella_risk": {
+      "type": "boolean",
+      "description": "画面内にステラ消費・購入・課金の要素が少しでも見えるとき true"
+    },
+    "action": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["tap", "close_x", "wait", "stop_and_notify"],
+          "description": "tap=指定座標のボタンをタップ / close_x=右上の×を閉じる / wait=1-2秒待って再判定 / stop_and_notify=安全停止して人間に通知"
+        },
+        "label": {
+          "type": ["string", "null"],
+          "description": "tap のとき: ボタンに書かれている文字列そのまま（検証に使う）。それ以外は null"
+        },
+        "x": {
+          "type": ["number", "null"],
+          "description": "tap/close_x のとき: タップ位置x（ウィンドウ相対 0..1、ボタン中心）"
+        },
+        "y": {
+          "type": ["number", "null"],
+          "description": "tap/close_x のとき: タップ位置y（ウィンドウ相対 0..1、ボタン中心）"
+        },
+        "reason": {
+          "type": "string",
+          "description": "この操作を選んだ理由（1文・日本語）"
+        }
+      },
+      "required": ["type", "label", "x", "y", "reason"],
+      "additionalProperties": false
+    },
+    "template_hint": {
+      "type": ["object", "null"],
+      "properties": {
+        "bbox": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "[x0, y0, x1, y1] ウィンドウ相対小数。この画面を再識別する静的で特徴的な領域（見出し等。可変部分は避ける）"
+        },
+        "note": {
+          "type": "string",
+          "description": "この領域を選んだ理由（例: 見出し「ミッション達成」の文字部分）"
+        }
+      },
+      "required": ["bbox", "note"],
+      "additionalProperties": false,
+      "description": "unknown で再識別可能なとき: テンプレ切り出し推奨領域。known や不確実なときは null"
+    },
+    "confidence": {
+      "type": "number",
+      "description": "0.0〜1.0"
+    }
+  },
+  "required": ["screen", "stella_risk", "action", "template_hint", "confidence"],
+  "additionalProperties": false
+}

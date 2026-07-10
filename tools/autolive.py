@@ -345,7 +345,8 @@ class AutoLive:
     def __init__(self, max_loops, dry_run=False, verbose=False, max_seconds=None,
                  tap_mode=TAP_MODE_DEFAULT, note_trigger=NOTE_TRIGGER_FRAC,
                  note_lead=NOTE_ROI_LEAD, note_roi=NOTE_ROI_RADIUS, holds=False,
-                 engine="roi", esc_enabled=True, flick=False):
+                 engine="roi", esc_enabled=True, flick=False, predict=False,
+                 auto_circles=False):
         self.max_loops = max_loops
         self.dry_run = dry_run
         self.verbose = verbose
@@ -372,6 +373,13 @@ class AutoLive:
         # --- ノーツ種別対応（赤=フリック）。到達直前ROIの色で判定（§17.9） ---
         self.flick = flick          # 赤ノーツでフリック（タップ→外向きスワイプ）を行う
         self.note_red_seen = [0.0] * len(CIRCLES)  # 円ごとに到達直前ROIで赤を見た直近時刻
+        # --- 種別先読み（--predict）。track を並走させ緑ホールド/赤フリックを出し分け ---
+        self.predict = predict      # 既定 False（OFF時は現行と同一パス）
+        self.forecast = None        # note_engine.TypeForecast（predict時に遅延生成）
+        self.hold_release_at = None # 緑ホールドの解除予定時刻（ETA駆動。predict時のみ）
+        # --- 円自動キャリブレーション（--auto-circles） ---
+        self.auto_circles = auto_circles  # ライブ突入時に円座標を画像から自動補正
+        self.circles_calibrated = False   # プロセス内で一度だけ実施
         # --- 実験的トラッキングエンジン（engine="track"）用 ---
         self.engine = engine        # "roi"(既定・現行) / "track"(スポーン検出+追跡)
         self._ne = None             # note_engine モジュール（遅延import）
@@ -614,6 +622,46 @@ class AutoLive:
             self.note_baseline[idx] = base + (wf - base) * NOTE_BASELINE_EMA
         return fired
 
+    def _auto_calibrate_circles(self, frame):
+        """--auto-circles: ライブ突入時にタップ円リングを検出し CIRCLES を実測へ補正。
+        4円すべてが prior の許容誤差内で一致したときだけ in-place 置換し（roi/keepalive/
+        rotate 全読者へ反映）、失敗時は現行値を維持する（誤検出で悪化させない）。"""
+        self.circles_calibrated = True
+        try:
+            if self._ne is None:
+                import note_engine as NE
+                self._ne = NE
+            det = self._ne.detect_circles(frame, self.win, self.content)
+            matched = self._ne.match_circles(det, list(CIRCLES))
+            if matched is None:
+                self.log(f"[auto-circles] 検出{len(det)}円が prior と一致せず → 現行値を維持")
+                return
+            old = list(CIRCLES)
+            CIRCLES[:] = matched
+            self.log(f"[auto-circles] 円座標を実測へ補正: {old} → {matched}")
+        except Exception as e:
+            self.log(f"[auto-circles] 失敗（現行値を維持）: {e}")
+
+    def _update_forecast(self, frame, now):
+        """--predict: note_engine の検出＋追跡を1フレーム回し、レーン別種別予報を更新。
+        例外時は予報なし（=全タップ）に劣化させ、周回は止めない。"""
+        try:
+            if self._ne is None:
+                import note_engine as NE
+                self._ne = NE
+            if self.tracker is None or self.forecast is None:
+                self.tracker = self._ne.Tracker(self.win, self.content,
+                                                lanes=list(CIRCLES))
+                self.forecast = self._ne.TypeForecast(n_lanes=len(CIRCLES))
+            blobs = self._ne.detect_notes(frame, self.win, self.content,
+                                          lanes=list(CIRCLES))
+            self.forecast.update(self.tracker.update(blobs, now), now)
+        except Exception as e:
+            self.forecast = None  # 次フレームで再生成を試みる
+            self.tracker = None
+            if self.verbose:
+                self.log(f"[predict] 予報更新に失敗（タップに劣化）: {e}")
+
     def _gameplay_timing(self, frame, now):
         """各円にノーツ到達を検出したらタップ。長押し（明るさ持続）は押下を保持。
         無検出ならキープアライブ。"""
@@ -634,11 +682,39 @@ class AutoLive:
                 if wf[i] < NOTE_BASELINE_FRAC:  # 静穏時のみベースライン取り込み
                     self.note_baseline[i] = base + (wf[i] - base) * NOTE_BASELINE_EMA
 
+        # 1.4) --predict: track 並走で種別予報を更新（発火判定には関与しない）。
+        if self.predict:
+            self._update_forecast(frame, now)
+
         # 1.5) 到達直前ROIの色で赤ノーツ（フリック）を先読み。直近で赤を見た円を記録。
         if self.flick:
             for i in range(len(CIRCLES)):
                 if self._approach_red(frame, i):
                     self.note_red_seen[i] = now
+
+        # 2p) --predict の緑ホールド継続中: ETA予測時刻まで保持。輝度には依存しない
+        #     （旧 --holds がタップ波紋と交絡した失敗要因を回避）。move で genuine 入力維持。
+        #     hold_release_at の有無で predict 開始のホールドだけを扱う（--holds 併用時、
+        #     旧方式が開始したホールドは従来ブロックへ流す）。
+        if self.predict and self.hold_idx is not None and self.hold_release_at is not None:
+            i = self.hold_idx
+            nxt = self.forecast.next_eta_at(i, now, ntype="green") if self.forecast else None
+            if nxt is not None:  # 対の緑のETAが精緻化されたら解除時刻を追従
+                self.hold_release_at = min(nxt, self.hold_start + HOLD_MAX_SEC)
+            if now < self.hold_release_at and (now - self.hold_start) < HOLD_MAX_SEC:
+                self._press(*self.content_to_screen(*CIRCLES[i]), "move")
+                self.last_input_ts = now
+                time.sleep(0.005)
+                return
+            self._press(*self.content_to_screen(*CIRCLES[i]), "up")
+            if self.verbose:
+                self.log(f"ホールド解除 円{i}（{now - self.hold_start:.2f}s, ETA駆動）")
+            self.note_last_tap[i] = now
+            self.last_input_ts = now
+            self.hold_idx = None
+            self.hold_release_at = None
+            time.sleep(0.02)
+            return
 
         # 2) ホールド継続中: その円が明るい限り押下保持（drag=genuine入力でPAUSE防止）。
         #    明るさが引いた or 上限超で離す（誤検出でも HOLD_MAX_SEC で必ず離れる）。
@@ -668,6 +744,24 @@ class AutoLive:
                 continue
             if not fired[i]:
                 continue
+            ntype = None
+            if self.predict and self.forecast is not None:
+                e = self.forecast.consume(i, now)
+                ntype = e["type"] if e else None
+            if self.predict and ntype == "green":
+                # 緑=次の緑まで長押し（§17.9）。解除は対の緑のETA（無ければ track の
+                # 精緻化を待ちつつ上限 HOLD_MAX_SEC）。
+                nxt = self.forecast.next_eta_at(i, now, ntype="green")
+                self.hold_release_at = min(nxt, now + HOLD_MAX_SEC) if nxt \
+                    else now + HOLD_MAX_SEC
+                self._press(*self.content_to_screen(*CIRCLES[i]), "down")
+                self.hold_idx = i
+                self.hold_start = now
+                self.last_input_ts = now
+                if self.verbose:
+                    self.log(f"ホールド開始 円{i}（解除予定 +{self.hold_release_at - now:.2f}s）")
+                tapped = True
+                break
             if self.holds and self.note_hi_frames[i] >= HOLD_SUSTAIN_FRAMES:
                 self._press(*self.content_to_screen(*CIRCLES[i]), "down")  # 離さず保持開始
                 self.hold_idx = i
@@ -677,7 +771,8 @@ class AutoLive:
                     self.log(f"長押し開始 円{i}")
                 tapped = True
                 break
-            if self.flick and (now - self.note_red_seen[i]) < FLICK_RED_MEMORY:
+            if (self.predict and ntype == "red") or \
+                    (self.flick and (now - self.note_red_seen[i]) < FLICK_RED_MEMORY):
                 self._flick(i)  # 赤ノーツ → タップ＋外向きフリック
                 if self.verbose:
                     self.log(f"フリック 円{i}（赤検出）")
@@ -934,6 +1029,8 @@ class AutoLive:
                 now = time.time()
                 if self.gameplay_since is None:
                     self.gameplay_since = now
+                    if self.auto_circles and not self.circles_calibrated:
+                        self._auto_calibrate_circles(frame)
                 # リザルト間の暗い遷移(KEEP OUT等)を一瞬 gameplay と誤認してクリアを
                 # 二重計上しないよう、gameplay が一定時間継続して初めて「ライブ中」とみなす。
                 if now - self.gameplay_since > MIN_LIVE_SEC:
@@ -1176,6 +1273,12 @@ def main():
                          "誤反応しやすく既定では無効）")
     ap.add_argument("--flick", action="store_true",
                     help="赤ノーツでフリック（到達直前ROIで赤検出→タップ＋外向きスワイプ）。§17.9")
+    ap.add_argument("--predict", action="store_true",
+                    help="track並走の種別先読みで緑ホールド/赤フリックを出し分け"
+                         "（実験的・既定OFF。不調時は自動でタップに劣化）")
+    ap.add_argument("--auto-circles", action="store_true",
+                    help="ライブ突入時にタップ円リングを画像検出して円座標を自動補正"
+                         "（実験的・既定OFF。4円全一致時のみ置換、失敗時は現行値維持）")
     ap.add_argument("--engine", choices=["roi", "track"], default="roi",
                     help="ライブ中の打鍵エンジン。roi=現行(到達点の明るさ・安定)、"
                          "track=実験(スポーン検出+追跡)。既定 roi")
@@ -1189,7 +1292,8 @@ def main():
              max_seconds=args.max_seconds, tap_mode=args.tap_mode,
              note_trigger=args.note_trigger, note_lead=args.note_lead,
              note_roi=args.note_roi, holds=args.holds, engine=args.engine,
-             esc_enabled=not args.no_esc, flick=args.flick).run()
+             esc_enabled=not args.no_esc, flick=args.flick, predict=args.predict,
+             auto_circles=args.auto_circles).run()
 
 
 if __name__ == "__main__":

@@ -641,6 +641,8 @@ class AutoLive:
             old = list(CIRCLES)
             CIRCLES[:] = matched
             self.circles_calibrated = True
+            self.tracker = None   # 旧レーン座標で作られた追跡系を破棄（次フレームで再生成）
+            self.forecast = None
             self.log(f"[auto-circles] 円座標を実測へ補正: {old} → {matched}")
         except Exception as e:
             self.log(f"[auto-circles] 失敗（現行値を維持）: {e}")

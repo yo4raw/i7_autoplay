@@ -625,8 +625,9 @@ class AutoLive:
     def _auto_calibrate_circles(self, frame):
         """--auto-circles: ライブ突入時にタップ円リングを検出し CIRCLES を実測へ補正。
         4円すべてが prior の許容誤差内で一致したときだけ in-place 置換し（roi/keepalive/
-        rotate 全読者へ反映）、失敗時は現行値を維持する（誤検出で悪化させない）。"""
-        self.circles_calibrated = True
+        rotate 全読者へ反映）、失敗時は現行値を維持する（誤検出で悪化させない）。
+        失敗時は calibrated を立てず、次のライブ突入時に再試行する（実フレーム実測で
+        単発フルマッチ率 ~86%/SE のため）。"""
         try:
             if self._ne is None:
                 import note_engine as NE
@@ -634,10 +635,12 @@ class AutoLive:
             det = self._ne.detect_circles(frame, self.win, self.content)
             matched = self._ne.match_circles(det, list(CIRCLES))
             if matched is None:
-                self.log(f"[auto-circles] 検出{len(det)}円が prior と一致せず → 現行値を維持")
+                self.log(f"[auto-circles] 検出{len(det)}円が prior と一致せず → "
+                         "現行値を維持（次ライブで再試行）")
                 return
             old = list(CIRCLES)
             CIRCLES[:] = matched
+            self.circles_calibrated = True
             self.log(f"[auto-circles] 円座標を実測へ補正: {old} → {matched}")
         except Exception as e:
             self.log(f"[auto-circles] 失敗（現行値を維持）: {e}")

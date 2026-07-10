@@ -26,11 +26,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 # 注: autolive とは相互利用するため、ここでは **import しない**（循環import回避）。
 # autolive 側が note_engine を import する。CLI関数内でのみ autolive を遅延importする。
 
-# --- フィールド模型（content矩形相対の小数。autolive.CIRCLES と同一値を持つ） ---
-# タップ円5箇所（中央 index2 はダミー＝SCORE表示と重なる）。autolive.CIRCLES と一致させること。
-CIRCLES = [(0.16, 0.63), (0.33, 0.85), (0.49, 0.93), (0.62, 0.85), (0.74, 0.63)]
-# 4レーン = 中央(index2)を除いた4箇所（左端/左下/右下/右端）。
-LANES = [CIRCLES[0], CIRCLES[1], CIRCLES[3], CIRCLES[4]]
+# --- フィールド模型（content矩形相対の小数） ---
+# 4レーンのタップ円（x=ウィンドウ幅相対 / y=content高相対）。
+# autolive.CIRCLES（右2円ズレ補正 2026-06-07 済み）と同値。autolive からは
+# Tracker(..., lanes=CIRCLES)/detect_notes(..., lanes=CIRCLES) で実値（自動
+# キャリブレーション後を含む）が渡されるため、これは単体CLI用の既定値。
+LANES = [(0.16, 0.63), (0.33, 0.85), (0.68, 0.85), (0.84, 0.63)]
 DARK_THRESH = 65.0  # autolive と同値（live判定用）
 # ノーツのスポーン中心（上部中央。実測でノーツ群が湧く位置。content相対）。
 # 実測: ノーツ track の開始は y_px≈55（content相対≈0.06）、x≈336（≈0.50）。
@@ -49,7 +50,7 @@ def _content_geom(win, content):
     return win["w"], top, (bottom - top)
 
 
-def detect_notes(frame_rgb, win, content):
+def detect_notes(frame_rgb, win, content, lanes=None):
     """1フレームからノーツ候補ブロブを検出して返す。
     戻り値: list of dict(x,y[px], lane, color, area, rgb)。x,yはフレームpx。"""
     W, top, ch = _content_geom(win, content)
@@ -75,7 +76,7 @@ def detect_notes(frame_rgb, win, content):
             "x": cx, "y": cy, "area": area,
             "rgb": tuple(int(v) for v in rgb),
             "color": classify_color(rgb),
-            "lane": assign_lane(cx, cy, win, content),
+            "lane": assign_lane(cx, cy, win, content, lanes),
         })
     return out
 
@@ -96,7 +97,7 @@ def classify_color(rgb):
     return "white"
 
 
-def assign_lane(cx, cy, win, content):
+def assign_lane(cx, cy, win, content, lanes=None):
     """ブロブのスポーンからの方向に最も近いレーンindexを返す（放射移動を仮定）。"""
     W, top, ch = _content_geom(win, content)
     sx, sy = W * SPAWN[0], top + SPAWN[1] * ch
@@ -106,7 +107,7 @@ def assign_lane(cx, cy, win, content):
     import math
     ang = math.atan2(vy, vx)
     best, bi = 1e9, -1
-    for i, (lxf, lyf) in enumerate(LANES):
+    for i, (lxf, lyf) in enumerate(LANES if lanes is None else lanes):
         lx, ly = W * lxf, top + lyf * ch
         la = math.atan2(ly - sy, lx - sx)
         d = abs((ang - la + math.pi) % (2 * math.pi) - math.pi)
@@ -124,12 +125,13 @@ class Tracker:
     MOVE_DISP = 30.0     # これ以上動いた track を「動くもの」とみなす
     OUTWARD_MIN = 18.0   # スポーンから外側へこれ以上進んだら note 候補
 
-    def __init__(self, win, content):
+    def __init__(self, win, content, lanes=None):
         self.win = win
         self.content = content
+        self.lanes = list(lanes) if lanes else list(LANES)
         W, top, ch = _content_geom(win, content)
         self.sx, self.sy = W * SPAWN[0], top + SPAWN[1] * ch
-        self.lane_px = [(W * xf, top + yf * ch) for xf, yf in LANES]
+        self.lane_px = [(W * xf, top + yf * ch) for xf, yf in self.lanes]
         self.tracks = {}   # id -> dict
         self._nid = 0
 
@@ -203,6 +205,119 @@ class Tracker:
         ntype = max(set(nonwhite), key=nonwhite.count) if nonwhite else "tap"
         return {"id": tr["id"], "pts": pts, "is_note": is_note, "lane": lane,
                 "eta": eta, "speed": speed, "type": ntype, "pos": (p1[1], p1[2])}
+
+
+# --- タップ円の自動キャリブレーション（--auto-circles, 機種非依存化） ---
+CIRCLE_BAND_Y0 = 0.50      # 円検出の下帯（content相対yの開始）
+CIRCLE_MATCH_TOL = 0.06    # prior との許容誤差（content相対距離）
+CIRCLE_R_FRAC = 0.05       # 円リング半径の目安（ウィンドウ幅相対。SE実測 ~26px/529w）
+
+
+def detect_circles(frame_rgb, win, content):
+    """下帯からタップ円リングを Hough 検出して content相対 [(xf,yf),...] を返す。
+    誤検出は match_circles 側で弾く前提のゆるい検出。"""
+    W, top, ch = _content_geom(win, content)
+    h, w = frame_rgb.shape[:2]
+    y0 = int(top + CIRCLE_BAND_Y0 * ch)
+    band = frame_rgb[max(0, y0):h]
+    if band.size == 0:
+        return []
+    gray = cv2.cvtColor(band, cv2.COLOR_RGB2GRAY)
+    gray = cv2.medianBlur(gray, 5)
+    r_est = max(8, int(W * CIRCLE_R_FRAC))
+    found = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1.2,
+                             minDist=int(W * 0.10), param1=120, param2=30,
+                             minRadius=int(r_est * 0.6), maxRadius=int(r_est * 1.6))
+    out = []
+    if found is not None:
+        for cx, cy, r in found[0]:
+            out.append((float(cx) / W, (float(cy) + y0 - top) / ch))
+    return out
+
+
+def match_circles(detected, prior, tol=CIRCLE_MATCH_TOL):
+    """検出円を prior（現行CIRCLES）へ最近傍マッチ。**全 prior が tol 内で1対1に
+    埋まったときだけ** prior と同順の補正リストを返す。埋まらなければ None
+    （呼び出し側は現行値を維持する＝誤検出で悪化させない）。"""
+    result, used = [], set()
+    for pxf, pyf in prior:
+        best_j, best_d = -1, tol
+        for j, (dxf, dyf) in enumerate(detected):
+            if j in used:
+                continue
+            d = ((dxf - pxf) ** 2 + (dyf - pyf) ** 2) ** 0.5
+            if d < best_d:
+                best_j, best_d = j, d
+        if best_j < 0:
+            return None
+        used.add(best_j)
+        result.append(detected[best_j])
+    return result
+
+
+FORECAST_STALE_SEC = 0.6   # ETA不明の予報を最後の目撃からこの秒数で破棄
+FORECAST_GRACE_SEC = 0.35  # 到達予測を過ぎてもこの猶予内は保持（追跡帯を抜けた後の到達待ち）
+
+
+class TypeForecast:
+    """レーン別の「次に到達するノーツ」予報。Tracker の annotation を毎フレーム取り込み、
+    roi 発火時に peek/consume で種別と到達予測を返す。予報は「あれば使う」情報で
+    発火判定には関与しない（不調時は呼び出し側が通常タップに劣化＝フェイルソフト）。
+    注: 追跡帯（FIELD_Y1）を抜けてから円到達まで track は見えないため、
+    破棄は last_seen でなく eta_at+grace を優先する。"""
+
+    def __init__(self, n_lanes=4, stale_sec=FORECAST_STALE_SEC,
+                 grace_sec=FORECAST_GRACE_SEC):
+        self.n_lanes = n_lanes
+        self.stale_sec = stale_sec
+        self.grace_sec = grace_sec
+        self.entries = {}  # track_id -> {"lane","type","eta_at","last_seen"}
+
+    def update(self, annotations, now):
+        for a in annotations:
+            if not a.get("is_note") or not (0 <= a.get("lane", -1) < self.n_lanes):
+                continue
+            eta_at = (now + a["eta"]) if a.get("eta") is not None else None
+            self.entries[a["id"]] = {"lane": a["lane"], "type": a["type"],
+                                     "eta_at": eta_at, "last_seen": now}
+        for tid in [t for t, e in self.entries.items() if self._expired(e, now)]:
+            del self.entries[tid]
+
+    def _expired(self, e, now):
+        if e["eta_at"] is not None:
+            return now > e["eta_at"] + self.grace_sec
+        return now - e["last_seen"] > self.stale_sec
+
+    def _nearest(self, lane, now):
+        best_id, best_key = None, None
+        for tid, e in self.entries.items():
+            if e["lane"] != lane:
+                continue
+            key = e["eta_at"] if e["eta_at"] is not None else float("inf")
+            if best_key is None or key < best_key:
+                best_id, best_key = tid, key
+        return best_id
+
+    def peek(self, lane, now):
+        tid = self._nearest(lane, now)
+        return self.entries[tid] if tid is not None else None
+
+    def consume(self, lane, now):
+        tid = self._nearest(lane, now)
+        return self.entries.pop(tid) if tid is not None else None
+
+    def next_eta_at(self, lane, now, ntype=None):
+        """lane で次に到達するノーツ（ntype 指定時はその種別のみ）の到達予測時刻。
+        緑ホールドの解除時刻（対の緑の到達）に使う。無ければ None。"""
+        best = None
+        for e in self.entries.values():
+            if e["lane"] != lane or e["eta_at"] is None:
+                continue
+            if ntype is not None and e["type"] != ntype:
+                continue
+            if best is None or e["eta_at"] < best:
+                best = e["eta_at"]
+        return best
 
 
 def _track(dirpath):
@@ -295,6 +410,35 @@ def _viz(frame_path, out_path):
         print(f'  lane{nt["lane"]} {nt["color"]:5} rgb{nt["rgb"]} area{nt["area"]} @({nt["x"]:.0f},{nt["y"]:.0f})')
 
 
+def _circles(frame_path, out_path):
+    """円自動検出の可視化: 検出円(黄)・prior LANES(緑)・マッチ結果(赤) を重ね描き。"""
+    from PIL import Image, ImageDraw
+    import autolive as A  # 遅延import（循環回避）
+    al = A.AutoLive(1, dry_run=True)
+    frame = np.array(Image.open(frame_path).convert("RGB"))
+    det = detect_circles(frame, al.win, al.content)
+    prior = list(A.CIRCLES)
+    matched = match_circles(det, prior)
+    im = Image.open(frame_path).convert("RGB")
+    d = ImageDraw.Draw(im)
+    W, top, ch = _content_geom(al.win, al.content)
+
+    def draw(pts, color, r):
+        for xf, yf in pts:
+            x, y = W * xf, top + yf * ch
+            d.ellipse([x - r, y - r, x + r, y + r], outline=color, width=2)
+
+    draw(det, (255, 255, 0), 10)
+    draw(prior, (0, 255, 0), 14)
+    if matched:
+        draw(matched, (255, 60, 60), 6)
+    im.save(out_path)
+    print(f"detected={len(det)} matched={'OK' if matched else 'None(維持)'} -> {out_path}")
+    for i, p in enumerate(prior):
+        m = f"{matched[i][0]:.3f},{matched[i][1]:.3f}" if matched else "-"
+        print(f"  prior{i} ({p[0]:.3f},{p[1]:.3f}) -> {m}")
+
+
 def _scan(dirpath):
     import glob
     from PIL import Image
@@ -325,6 +469,8 @@ def main():
         _track(sys.argv[2])
     elif cmd == "live":
         _live(float(sys.argv[2]) if len(sys.argv) > 2 else 60.0)
+    elif cmd == "circles":
+        _circles(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "/tmp/i7_circles.png")
     else:
         print(__doc__)
 

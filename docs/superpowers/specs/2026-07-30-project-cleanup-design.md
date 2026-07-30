@@ -90,17 +90,27 @@ tools/
 
 ### 3.3 未追跡ファイルの取り込み
 
-すべて git 管理下に入れる。削除するものはない。
+削除するものはない。ただし**大量の画像はコミットしない**（ユーザー指示）。
 
 | パス | 枚数/本数 | サイズ | 扱い |
 |---|---|---|---|
 | `tools/` 12本 | 12 | 26KB | 3.1 の分類でコミット |
-| `assets/screens/mac_inuse/` | - | - | コミット（`unlock_watcher.py` が扱う画面の資料） |
-| `assets/screens/mac_unlock_prompt/` | - | - | コミット（同上） |
-| `tests/corpus_raw/` | 507 | 69MB | **全部コミット**（欠落なく回帰テストを回せることを優先） |
+| `assets/screens/mac_inuse/` | 数枚 | 数十KB | コミット。`unlock_watcher.py` が扱う画面の資料 |
+| `assets/screens/mac_unlock_prompt/` | 数枚 | 数十KB | コミット。`unlock_watcher.py` が `id_text.png` をテンプレ照合に使うため、除外すると clone 先で壊れる |
+| `tests/corpus_raw/` | 507 | 69MB | **`.gitignore` して除外**。ローカル資産として保持し、取得手順を docs に書く |
 
-`.gitignore` は現状のままで十分（`__pycache__/` `*.py[cod]` `.venv/` `.DS_Store` `/tmp/i7dbg/`）。
-`tests/__pycache__/` も既存ルールで除外される。
+`.gitignore` に次を追加する。
+
+```gitignore
+# 実フレームコーパス（69MB。tools/ops/corpus_collector.py で採取する）
+/tests/corpus_raw/
+```
+
+既存の `tests/test_corpus_smoke.py` は `@unittest.skipUnless(os.path.isdir(CORPUS))` を持つので、
+コーパスが無い環境では skip され、スイートは通る。段階2で `detect()` の回帰テストを足すときも
+同じ skip 方針を守り、**コーパスの有無でスイートが落ちないようにする**。
+
+`tests/__pycache__/` は既存ルール（`__pycache__/`）で除外される。
 
 ### 3.4 README
 
@@ -227,7 +237,7 @@ docs へ移すもの: アーキテクチャ詳細、端末非依存の実装方�
 | リスク | 対応 |
 |---|---|
 | ドキュメント移設中に内容を書き換えてしまい、実機で確定した事実を壊す | 移設は原則コピー。書き換えは 4.2 の3点に限定し、diff をレビューする |
-| 69MB のコミットでリポジトリが重くなる | 承知の上で全部コミット（欠落なく回帰テストを回せることを優先）。今後の追加分は都度判断する |
+| コーパスを除外したので、別環境では `detect()` の回帰テストが回せない | `tests/test_corpus_smoke.py` は既に skip 条件付き。取得手順（`tools/ops/corpus_collector.py`）を `docs/README.md` と `tools/ops/README.md` に明記する |
 | `tools/` 移動で無人運用が起動しなくなる | 検証項目 2・3 で機械的に確認する。段階3で統合するまで役割は変えない |
 | 段階1 の最中に iPhone が復旧し、周回を再開したくなる | 段階1 は本番3ファイルを触らないため、`git stash` なしでいつでも `tools/autolive.py` を起動できる |
 

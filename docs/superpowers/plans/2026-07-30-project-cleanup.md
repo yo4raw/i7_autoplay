@@ -44,11 +44,15 @@
 **Files:**
 - Add: `tools/capture_click.py` `tools/color_probe.py` `tools/color_probe2.py` `tools/focus_probe.py` `tools/focus_state_monitor.py` `tools/hidmove_test.py` `tools/idlekeeper.py` `tools/pause_ab.sh` `tools/pause_monitor.py` `tools/pure_observe.py` `tools/result_grab.py` `tools/supervise_autolive.sh` `tools/trigger_test.py` `tools/unlock_watcher.py`
 - Add: `assets/screens/mac_inuse/` `assets/screens/mac_unlock_prompt/`
-- Add: `tests/corpus_raw/`（507枚・69MB）
+- Modify: `.gitignore`（`tests/corpus_raw/` を除外）
 
 **Interfaces:**
 - Consumes: なし
 - Produces: 以降のタスクが `git mv` を使える状態
+
+**`tests/corpus_raw/` はコミットしない**（507枚・69MB。ユーザー指示で大量の画像は git に入れない）。
+`.gitignore` で除外し、ローカル資産として保持する。`assets/screens/mac_unlock_prompt/` は
+数十KB で `unlock_watcher.py` が `id_text.png` をテンプレ照合に使うため、これはコミットする。
 
 - [ ] **Step 1: 未追跡ファイルの一覧を確認する**
 
@@ -60,42 +64,66 @@ git status --porcelain
 期待: 17行の `??` が出る（`tools/` 12本 + `assets/screens/` 2ディレクトリ + `tests/corpus_raw/`）。
 `tools/supervise_autolive.sh` と `tools/unlock_watcher.py` が含まれることを目視確認する。
 
-- [ ] **Step 2: 全部ステージする**
+- [ ] **Step 2: `.gitignore` にコーパスの除外を追加する**
+
+`.gitignore` の末尾に追記する。
+
+```gitignore
+
+# 実フレームコーパス（14状態・507枚・69MB。tools/ops/corpus_collector.py で採取する）
+# 大きいので git には入れない。無い環境では tests/test_corpus_smoke.py が skip される。
+/tests/corpus_raw/
+```
+
+追記後、除外が効いていることを確認する。
 
 ```bash
-git add tools/ assets/screens/mac_inuse assets/screens/mac_unlock_prompt tests/corpus_raw
-git status --porcelain | head -20
+git status --porcelain | grep corpus_raw || echo "corpus_raw は除外された"
+```
+
+期待: `corpus_raw は除外された`。
+
+- [ ] **Step 3: 残りをステージする**
+
+```bash
+git add tools/ assets/screens/mac_inuse assets/screens/mac_unlock_prompt .gitignore
+git status --porcelain
 git diff --cached --stat | tail -3
 ```
 
-期待: `A ` で始まる行のみ。stat の合計が 520 ファイル前後（tools 14 + assets 数枚 + corpus 507）。
-`M ` （変更）で始まる行が1つも無いこと — 本番3ファイルを触っていない証拠。
+期待: `A ` （追加）と `.gitignore` の `M ` のみ。stat の合計は 20 ファイル前後
+（tools 12 + assets 数枚 + .gitignore）。
+**`tools/autolive.py` `tools/driver.py` `tools/note_engine.py` が `M ` で現れないこと** —
+本番3ファイルを触っていない証拠。
 
-- [ ] **Step 3: 既存テストが通ることを確認する**
+- [ ] **Step 4: 既存テストが通ることを確認する**
 
 ```bash
 .venv/bin/python -m unittest discover -s tests 2>&1 | tail -5
 ```
 
-期待: `OK`。`test_corpus_smoke` が skip ではなく実行されるようになる（corpus が揃ったため）。
+期待: `OK`。ローカルには `tests/corpus_raw/` が残っているので `test_corpus_smoke` は
+実行される（git には入らないだけ）。
 
-- [ ] **Step 4: コミット**
+- [ ] **Step 5: コミット**
 
 ```bash
 git commit -q -F - <<'EOF'
-chore: 未追跡ファイルを取り込む（運用スクリプト・調査ツール・実フレームコーパス）
+chore: 未追跡の運用スクリプト・調査ツールを取り込み、コーパスを除外する
 
 CLAUDE.md が起動を指示している supervise_autolive.sh を含む tools 12本が
-未追跡で、clone した環境では存在しなかった。あわせて mac_inuse /
-mac_unlock_prompt の画面資料と、実機なしで detect() の回帰を検証できる
-tests/corpus_raw（14状態・507枚）を取り込む。
+未追跡で、clone した環境では存在しなかった。unlock_watcher.py が参照する
+mac_unlock_prompt / mac_inuse の画面資料もあわせて取り込む。
+
+tests/corpus_raw（14状態・507枚・69MB）は大きいので .gitignore で除外し、
+ローカル資産として保持する。無い環境では test_corpus_smoke が skip される。
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 git status --porcelain
 ```
 
-期待: `git status --porcelain` の出力が空。
+期待: `git status --porcelain` の出力が空（`tests/corpus_raw/` は無視されるため現れない）。
 
 ---
 
@@ -154,9 +182,6 @@ def _scripts_in(d):
 
 
 class TestToolsLayout(unittest.TestCase):
-    def test_production_scripts_stay_at_tools_root(self):
-        self.assertEqual(sorted(PROD), _scripts_in(TOOLS))
-
     def test_ops_scripts_are_under_ops(self):
         self.assertEqual(sorted(OPS), _scripts_in(os.path.join(TOOLS, "ops")))
 
@@ -198,26 +223,12 @@ class TestOpsPathResolution(unittest.TestCase):
             sys.path.remove(opsdir)
 
 
-class TestNoCwdRelativeImports(unittest.TestCase):
-    """`sys.path.insert(0, 'tools')` は実行時のカレントディレクトリに依存する。
-    移動後は __file__ 基準に統一する。"""
-
-    def test_no_cwd_relative_syspath(self):
-        offenders = []
-        for d in (TOOLS, os.path.join(TOOLS, "ops"), os.path.join(TOOLS, "probes")):
-            for f in _scripts_in(d):
-                if not f.endswith(".py"):
-                    continue
-                p = os.path.join(d, f)
-                with open(p, encoding="utf-8") as fh:
-                    if "sys.path.insert(0, 'tools')" in fh.read():
-                        offenders.append(p)
-        self.assertEqual([], offenders)
-
-
 if __name__ == "__main__":
     unittest.main()
 ```
+
+`tools/` 直下の本番3本チェックと CWD 依存 `sys.path` のチェックは Task 3 で追加する。
+probes が未移動のうちは必ず失敗するので、ここで入れるとコミットがレッドになるため。
 
 - [ ] **Step 2: テストを実行して失敗することを確認する**
 
@@ -225,8 +236,8 @@ if __name__ == "__main__":
 .venv/bin/python -m unittest tests.test_repo_layout -v 2>&1 | tail -20
 ```
 
-期待: FAIL。`test_production_scripts_stay_at_tools_root` は 23 本 vs 3 本で不一致、
-`test_ops_scripts_are_under_ops` は `[] != OPS`、`test_no_cwd_relative_syspath` は 9 本が列挙される。
+期待: FAIL。`test_ops_scripts_are_under_ops` が `[] != OPS`（`tools/ops/` が存在しない）。
+`TestOpsPathResolution.test_asset_paths_resolve` も `ModuleNotFoundError` で ERROR になる。
 
 - [ ] **Step 3: ディレクトリを作って8本を移動する**
 
@@ -345,9 +356,14 @@ cd "$(dirname "$0")/../.."
 .venv/bin/python -m unittest tests.test_repo_layout -v 2>&1 | tail -20
 ```
 
-期待: `test_ops_scripts_are_under_ops` `test_python_scripts_compile` `test_shell_scripts_parse`
-`test_asset_paths_resolve` が PASS。
-`test_production_scripts_stay_at_tools_root` と `test_no_cwd_relative_syspath` はまだ FAIL（probes が未移動のため）。
+期待: **すべて PASS**（`test_ops_scripts_are_under_ops` `test_python_scripts_compile`
+`test_shell_scripts_parse` `test_asset_paths_resolve`）。
+
+```bash
+.venv/bin/python -m unittest discover -s tests 2>&1 | tail -5
+```
+
+期待: `OK`。このコミットの時点でスイートは緑であること。
 
 - [ ] **Step 8: 実際に起動して落ち方を確認する**
 
@@ -567,7 +583,7 @@ python tools/driver.py click <xfrac> <yfrac>
 | `reconnect_watcher.py` | ミラーリング切断の「やり直す」ボタンをテンプレ照合で見つけた時だけ押す。再接続成功で exit 0 | 現役 |
 | `unlock_watcher.py` | 「iPhoneのロックを解除してください」プロンプトの解消を待つ | 現役 |
 | `morning_watcher.sh` | ユーザーが iPhone を触った／再起動した合図（ウィンドウ消失・ID 変化・暗転）を検知する。入力は一切送らない | 現役 |
-| `corpus_collector.py` | 周回と並走して画面を受動採取し `tests/corpus_raw/<state>/` へ保存する。回帰テスト用コーパスの材料 | 現役 |
+| `corpus_collector.py` | 周回と並走して画面を受動採取し `tests/corpus_raw/<state>/` へ保存する。**コーパスは `.gitignore` 済み**なので、clone した環境ではこれで採り直す | 現役 |
 
 ```bash
 # 無人運用の標準手順（target_epoch = 終了する UNIX 時刻）
@@ -782,6 +798,20 @@ macOS の iPhone ミラーリング越しに IDOLiSH7 の累計イベントラ�
 コードの入口は [`../tools/README.md`](../tools/README.md)。
 LLM copilot 用のプロンプト資産は [`../assets/prompts/README.md`](../assets/prompts/README.md)。
 画面グラフのドラフト素材は `../data/screens_draft.yaml`（`superpowers/specs/2026-06-10-screen-graph-design.md` の観察記録。実装前の参考データ）。
+
+## 実フレームコーパス（git に入っていない）
+
+`tests/corpus_raw/`（14状態・507枚・69MB）は実機なしで `detect()` の回帰を検証できる資産だが、
+サイズが大きいので `.gitignore` で除外している。clone した環境には存在しない。
+
+採取するには周回中に次を並走させる。入力を一切送らないので周回を妨げない。
+
+```bash
+python -u tools/ops/corpus_collector.py 1800    # 30分ぶん採取
+```
+
+`tests/test_corpus_smoke.py` はコーパスが無ければ skip されるので、
+`.venv/bin/python -m unittest discover -s tests` はコーパス無しでも通る。
 ```
 
 - [ ] **Step 3: `docs/setup.md` を書く**
@@ -1370,7 +1400,8 @@ git diff main --stat | tail -5
 git log main..HEAD --oneline
 ```
 
-期待: 11 コミット（設計書 + 本計画書 + Task 1-9 の9本）。stat のファイル数は 540 前後。
+期待: 11 コミット（設計書 + 本計画書 + Task 1-9 の9本）。stat のファイル数は 45 前後
+（`tests/corpus_raw/` 507枚は `.gitignore` で除外されているため）。
 
 - [ ] **Step 7: PR を作る**
 
@@ -1385,7 +1416,8 @@ gh pr create --title "chore: プロジェクト整理（段階1: 棚卸し＋ド
 ## 変更
 
 - **未追跡20ファイルを取り込み**。`CLAUDE.md` が起動を指示していた `supervise_autolive.sh` が
-  未追跡で、clone した環境には存在しなかった。実フレームコーパス（14状態・507枚）も取り込み。
+  未追跡で、clone した環境には存在しなかった。実フレームコーパス（14状態・507枚・69MB）は
+  サイズが大きいので `.gitignore` で除外し、採取手順を `docs/README.md` に明記した。
 - **`tools/` を3分類**。本番3（直下）/ 運用8（`ops/`）/ 調査12（`probes/`）。
   移動で壊れる相対パス解決（`sys.path`・`ROOT`・シェルの `cd`）を修正。
 - **`docs/specification.md` 1,056行を実態中心の6ファイルへ再編**。未実装の当初設計

@@ -66,6 +66,14 @@ python tools/driver.py click <xfrac> <yfrac>
 
 ## LLM copilot（廉価モデル併用の無人運用）
 
+**役割分担の原則（ユーザー指定・2026-07-31）**: LLM の担当はあくまで**監視と改善**
+（周回状況の見張り・異常の判断・スクリプトやパラメータの改善）。**実際のゲーム操作
+（タップ・ナビゲーション・周回）はスクリプト**（`tools/autolive.py` / `tools/driver.py` /
+`tools/ops/`）**が行う**。LLM が画面を1クリックずつアドホックに操作するのは開発・検証時の
+例外に留め、恒常的に必要になった操作手順はスクリプトへ実装して自動化する
+（イベント導線ナビも暫定運用であり、スクリプト化が改善対象）。周回の安全性・成立が
+LLM に依存しない設計を維持すること。
+
 プロンプト資産は `assets/prompts/`（**Fable 5 作成済み。実装・運用時に書き直さずそのまま使う**）。
 設計は [`docs/superpowers/specs/2026-07-10-llm-copilot-design.md`](docs/superpowers/specs/2026-07-10-llm-copilot-design.md)。
 

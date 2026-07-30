@@ -102,7 +102,7 @@ class TestNoCwdRelativeImports(unittest.TestCase):
 
 
 def _spec_still_unsplit():
-    """docs/specification.md がまだ分割前の本文（1,000行超）を持っているか。
+    """docs/specification.md がまだ分割前の本文を持っているか（100行超で判定）。
 
     分割後は20行程度の案内スタブになるので、この関数は False を返し
     TestNoStaleToolPaths が自動的に有効になる。ファイルの存在ではなく

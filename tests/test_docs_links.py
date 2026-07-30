@@ -7,18 +7,38 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LINK = re.compile(r"\[[^\]]*\]\(([^)#]+)(?:#[^)]*)?\)")
 SKIP_PREFIXES = ("http://", "https://", "mailto:")
-# docs/superpowers/（設計書・計画書）と docs/archive/ は当時の記録。
-# 計画書はコードフェンス内に「他ファイルに貼る想定」のリンク例を含むため、
-# その場所からの相対解決は本来成立しない。tests/test_repo_layout.py の
-# TestNoStaleToolPaths と同じ理由・同じ除外対象。
-EXCLUDE_PREFIXES = ("docs/superpowers/", "docs/archive/")
+
+
+def _strip_code_fences(text):
+    """コードフェンス（```/~~~）で囲まれた領域を取り除いたテキストを返す。
+
+    設計書や計画書（docs/superpowers/ 配下など）には、コードフェンス内に
+    「他のファイルに貼り付ける想定」のリンク例が書かれていることがあり、
+    そのファイル自身の場所からは相対解決できない（＝誤検出になる）。
+    フェンス内を丸ごと除去してからリンク抽出することで、ディレクトリ単位の
+    除外リストに頼らずに済む。フェンスが閉じられないまま終端した場合は、
+    ファイル末尾までをフェンス内とみなす。
+    """
+    out = []
+    fence_marker = None
+    for line in text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if fence_marker is None:
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                fence_marker = stripped[:3]
+                continue
+            out.append(line)
+        else:
+            if stripped.startswith(fence_marker):
+                fence_marker = None
+            continue
+    return "".join(out)
 
 
 def _tracked_markdown():
     r = subprocess.run(["git", "ls-files", "*.md"], cwd=ROOT,
                        capture_output=True, text=True, check=True)
-    return [p for p in r.stdout.splitlines()
-            if p and not p.startswith(EXCLUDE_PREFIXES)]
+    return [p for p in r.stdout.splitlines() if p]
 
 
 class TestDocsLinks(unittest.TestCase):
@@ -28,6 +48,7 @@ class TestDocsLinks(unittest.TestCase):
             path = os.path.join(ROOT, rel)
             with open(path, encoding="utf-8") as fh:
                 text = fh.read()
+            text = _strip_code_fences(text)
             for target in LINK.findall(text):
                 if target.startswith(SKIP_PREFIXES):
                     continue

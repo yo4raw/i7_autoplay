@@ -3,7 +3,7 @@
 本書は **実機（iPhone SE / iPhone ミラーリング, 671×348）で autolive を長時間（160回超クリア）
 運用しながら観測**した、累計イベント周回中の**具体的な画面遷移**をまとめたもの。
 旧 `docs/specification.md`（現 [`architecture.md`](architecture.md)）にあった設計時の FSM 概念仕様（S0〜S16）も本書の付録Aに集約した。
-**挙動を変える前に本書と仕様書の両方を読むこと。**
+**挙動を変える前に本書と [`README.md`](README.md) 索引が指す各ドキュメントの両方を読むこと。**
 
 > 凡例: 座標は特記なき限り **ウィンドウ相対 (0..1)**。「アンカー」はテンプレのマッチ位置＋
 > 固定pxオフセット（画像追従・端末非依存）。「中央オフセット」はゲーム中央＋固定pxオフセット。
@@ -77,7 +77,8 @@
 
 - 見た目: 暗い演奏画面。COMBO/SCORE表示、下部に判定円。
 - アクション: timing検出でノーツ到達時にタップ。ノーツ無し区間は keepalive で genuine 入力を
-  出し続け **PAUSE を防ぐ**（HIDSystemStateソース＋カーソルワープが必須。詳細は仕様書§17.6F）。
+  出し続け **PAUSE を防ぐ**（HIDSystemStateソース＋カーソルワープが必須。詳細は
+  [`device-findings.md`](device-findings.md) の「PAUSE の解決策（2026-06-05）」）。
 - 所要: PAUSE解決後 約115〜125秒/曲。
 
 ### 3.2 per-song Result
@@ -229,7 +230,7 @@
 
 > 実装前の設計時に汎用リズムゲーム周回フローとして記述した概念 FSM。実機で確認した具体仕様は
 > 本書 §1〜§6 を正とし、本付録は設計意図の記録として残す。各状態に必要なテンプレ画像は
-> 仕様書付録のチェックリストに対応。
+> [`architecture.md`](architecture.md) の「17.1 必要テンプレート画像チェックリスト」に対応。
 
 ### A.1 状態一覧
 
@@ -299,7 +300,7 @@ INIT → HOME → EVENT_PAGE → LIVE_SELECT → (SONG_SELECT) → FORMATION_CON
 | S10 RESULT | ★`result_marker` | 「次へ/タップで進む」を連続タップ | S11 | S12 / S14 |
 | S11 REWARD_COLLECT | ★`reward_marker` | 「OK/受け取る/閉じる」を順次タップ、派生ポップ連鎖処理 | 周回+1→S13 | S12 / S14 |
 | S12 POPUP_HANDLE | ★`popup_*`（levelup/login_bonus/notice/network_error/generic_ok/generic_close） | 種別に応じ閉じる/OK/リトライ | 割込み元へ復帰（状態スタック）or 再判定 | 閉じない/未知→S14 |
-| S13 LOOP_DECISION | （ロジック状態） | 停止条件を順に評価（仕様書5.4） | 継続→S1 または「もう一度」で S5/S6 へ（★`play_again_marker`） | 該当→S15/S16 |
+| S13 LOOP_DECISION | （ロジック状態） | 停止条件を順に評価（[`architecture.md`](architecture.md) §5.4） | 継続→S1 または「もう一度」で S5/S6 へ（★`play_again_marker`） | 該当→S15/S16 |
 | S14 RECOVERY | （いずれにも不一致） | リトライ+1、★`back_button`/`home_button`試行、（任意）スクショ保存、待って再判定 | 既知状態へ復帰 | リトライ上限超過→S16 |
 | S15 SAFE_STOP | — | 停止理由・サマリをログ、リソース解放、exit 0 | 終了 | — |
 | S16 ERROR_STOP | — | エラー・最終状態・最終スクショをログ、解放、exit≠0 | 終了 | — |

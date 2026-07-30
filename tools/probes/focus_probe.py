@@ -6,8 +6,10 @@ activate も打鍵もしない（--tap で genuine 打鍵を併用可）。PAUSE
 """
 import sys
 import time
+import os
 import Quartz
 from AppKit import NSWorkspace
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import autolive
 import driver
 

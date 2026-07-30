@@ -6,6 +6,7 @@ tools/ の3分類、移動したスクリプトの構文、移動後の相対パ
 import importlib
 import os
 import py_compile
+import re
 import subprocess
 import sys
 import unittest
@@ -100,23 +101,33 @@ class TestNoCwdRelativeImports(unittest.TestCase):
                         offenders.append(p)
         self.assertEqual([], offenders)
 
+    def test_scripts_importing_tools_modules_fix_syspath(self):
+        """tools/ops・tools/probes 配下で driver/autolive/note_engine を import する
+        スクリプトは、必ず __file__ 基準の sys.path.insert を持つこと。
 
-def _spec_still_unsplit():
-    """docs/specification.md がまだ分割前の本文を持っているか（100行超で判定）。
+        これが無いと（tools/ 直下からの暗黙の sys.path[0] に頼っている場合）、
+        tools/ops・tools/probes へ移した個別スクリプトを他ディレクトリから
+        実行した際に ModuleNotFoundError で壊れる。"""
+        import_pattern = re.compile(
+            r"^\s*(import\s+(driver|autolive|note_engine)\b"
+            r"|from\s+(driver|autolive|note_engine)\s+import\b)",
+            re.MULTILINE,
+        )
+        offenders = []
+        for d in (os.path.join(TOOLS, "ops"), os.path.join(TOOLS, "probes")):
+            for f in _scripts_in(d):
+                if not f.endswith(".py"):
+                    continue
+                p = os.path.join(d, f)
+                with open(p, encoding="utf-8") as fh:
+                    src = fh.read()
+                if import_pattern.search(src) and "sys.path.insert" not in src:
+                    offenders.append(p)
+        self.assertEqual([], offenders,
+                         "driver/autolive/note_engine を import するが "
+                         "sys.path.insert が無いファイル: " + ", ".join(offenders))
 
-    分割後は20行程度の案内スタブになるので、この関数は False を返し
-    TestNoStaleToolPaths が自動的に有効になる。ファイルの存在ではなく
-    中身で判定するのは、スタブ化後も永久に skip され続けるのを防ぐため。
-    """
-    p = os.path.join(ROOT, "docs", "specification.md")
-    if not os.path.exists(p):
-        return False
-    with open(p, encoding="utf-8") as fh:
-        return sum(1 for _ in fh) > 100
 
-
-@unittest.skipIf(_spec_still_unsplit(),
-                 "docs/specification.md の分割まで旧パス参照が残る")
 class TestNoStaleToolPaths(unittest.TestCase):
     """移動したスクリプトを旧パスで参照している箇所が残っていないこと。
 

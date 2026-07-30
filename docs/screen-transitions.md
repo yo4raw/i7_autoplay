@@ -2,7 +2,7 @@
 
 本書は **実機（iPhone SE / iPhone ミラーリング, 671×348）で autolive を長時間（160回超クリア）
 運用しながら観測**した、累計イベント周回中の**具体的な画面遷移**をまとめたもの。
-`docs/specification.md`（仕様書）にあった設計時の FSM 概念仕様（S0〜S16）も本書の付録Aに集約した。
+旧 `docs/specification.md`（現 [`architecture.md`](architecture.md)）にあった設計時の FSM 概念仕様（S0〜S16）も本書の付録Aに集約した。
 **挙動を変える前に本書と仕様書の両方を読むこと。**
 
 > 凡例: 座標は特記なき限り **ウィンドウ相対 (0..1)**。「アンカー」はテンプレのマッチ位置＋
@@ -219,12 +219,13 @@
 
 - `tools/autolive.py` — FSM 本体（`detect()` の判定順・各状態ハンドラ・定数）
 - `assets/templates/*.png` — 判定テンプレ（`<stem>_*.png` 変種を自動併用）
-- `docs/specification.md` — 全体仕様（§17.6F PAUSE 対策の詳細）
+- [`device-findings.md`](device-findings.md) — PAUSE 対策の詳細
+- [`README.md`](README.md) — ドキュメント索引
 - 停止時スクショ: `/tmp/i7dbg/`（`stuck_*`, `*_stuck_*`, `gameplay_timeout_*`, `life_depleted_*`）
 
 ---
 
-## 付録A. 設計時の FSM 概念仕様（specification.md §6 より移設）
+## 付録A. 設計時の FSM 概念仕様（旧 specification.md §6 より移設）
 
 > 実装前の設計時に汎用リズムゲーム周回フローとして記述した概念 FSM。実機で確認した具体仕様は
 > 本書 §1〜§6 を正とし、本付録は設計意図の記録として残す。各状態に必要なテンプレ画像は

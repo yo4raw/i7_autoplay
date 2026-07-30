@@ -1,9 +1,9 @@
 #!/bin/zsh
 # 自動周回スーパーバイザ: autolive.py がクラッシュ/終了しても、目標時刻まで自動再起動する。
-# 使い方: tools/supervise_autolive.sh <target_epoch>
+# 使い方: tools/ops/supervise_autolive.sh <target_epoch>
 # target_epoch: 終了する UNIX 時刻（秒）。これを過ぎたら再起動せず終了。
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 source .venv/bin/activate
 
 TARGET="${1:?usage: supervise_autolive.sh <target_epoch>}"

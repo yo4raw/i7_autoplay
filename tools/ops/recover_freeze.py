@@ -3,7 +3,7 @@
 手順: アイナナを強制終了（⌘1→⌘2→カード上スワイプ）→ Spotlight(⌘3)から再起動 →
 テンプレ照合ナビで楽曲選択まで進める。既知画面以外では絶対にクリックしない（安全第一）。
 
-使い方: python -u tools/recover_freeze.py   （成功で exit 0 / 失敗 exit 1）
+使い方: python -u tools/ops/recover_freeze.py   （成功で exit 0 / 失敗 exit 1）
 前提: supervisor / autolive は停止済みであること（呼び出し側で pkill）。
 """
 import os
@@ -11,13 +11,13 @@ import subprocess
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import driver  # noqa: E402
 from autolive import match_multiscale  # noqa: E402
 
 import cv2  # noqa: E402
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCREENS = os.path.join(ROOT, "assets", "screens")
 TEMPLATES = os.path.join(ROOT, "assets", "templates")
 

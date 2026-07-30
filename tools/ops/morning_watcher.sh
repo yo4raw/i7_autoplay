@@ -3,7 +3,7 @@
 # 合図 = ミラーリングウィンドウ消失 / ウィンドウID変化 / 画面の大幅な暗転（切断オーバーレイ）。
 # 入力は一切送らない（読むだけ）。
 set -u
-cd /Users/yo4raw/git/i7_autoplay
+cd "$(dirname "$0")/../.."
 source .venv/bin/activate
 BASE_ID="${1:?usage: i7_morning_watcher.sh <baseline_window_id>}"
 echo "watcher start baseline_id=$BASE_ID"

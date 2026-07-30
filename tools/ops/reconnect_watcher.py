@@ -4,19 +4,19 @@
 ボタンが消え、かつ画面がゲーム/ホーム等に変わったら exit 0（=再接続成功、呼び出し側で周回再開）。
 タイムアウトで exit 1。
 
-使い方: python -u tools/reconnect_watcher.py [timeout_sec=14400]
+使い方: python -u tools/ops/reconnect_watcher.py [timeout_sec=14400]
 """
 import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import driver  # noqa: E402
 from autolive import match_multiscale  # noqa: E402
 
 import cv2  # noqa: E402
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RETRY_TMPL = os.path.join(ROOT, "assets", "screens", "mac_disconnect", "retry_btn.png")
 
 

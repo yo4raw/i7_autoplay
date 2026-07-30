@@ -101,9 +101,22 @@ class TestNoCwdRelativeImports(unittest.TestCase):
         self.assertEqual([], offenders)
 
 
-@unittest.skipIf(
-    os.path.exists(os.path.join(ROOT, "docs", "specification.md")),
-    "docs/specification.md の分割（Task 8）まで旧パス参照が残る")
+def _spec_still_unsplit():
+    """docs/specification.md がまだ分割前の本文（1,000行超）を持っているか。
+
+    分割後は20行程度の案内スタブになるので、この関数は False を返し
+    TestNoStaleToolPaths が自動的に有効になる。ファイルの存在ではなく
+    中身で判定するのは、スタブ化後も永久に skip され続けるのを防ぐため。
+    """
+    p = os.path.join(ROOT, "docs", "specification.md")
+    if not os.path.exists(p):
+        return False
+    with open(p, encoding="utf-8") as fh:
+        return sum(1 for _ in fh) > 100
+
+
+@unittest.skipIf(_spec_still_unsplit(),
+                 "docs/specification.md の分割まで旧パス参照が残る")
 class TestNoStaleToolPaths(unittest.TestCase):
     """移動したスクリプトを旧パスで参照している箇所が残っていないこと。
 

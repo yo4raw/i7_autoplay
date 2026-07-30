@@ -32,7 +32,7 @@
 
 | 症状（ログ/画面の見え方） | 原因 | 対処 |
 |---|---|---|
-| autolive プロセスが死んでいるだけ（supervisor も死んでいる） | クラッシュ/サイレント死（§17.7） | `nohup tools/supervise_autolive.sh <target_epoch> &` で再起動（ログ: /tmp/i7_supervisor.log） |
+| autolive プロセスが死んでいるだけ（supervisor も死んでいる） | クラッシュ/サイレント死（`docs/operations.md`） | `nohup tools/ops/supervise_autolive.sh <target_epoch> &` で再起動（ログ: /tmp/i7_supervisor.log） |
 | `gameplay が Ns 継続（異常/ミラーリング切断の可能性）` で停止、スクショが暗い/「iPhoneの使用中は…」表示 | iPhone を物理的に触った等でミラーリング切断 | `open -b com.apple.ScreenContinuity` で再接続 → 30秒待つ → `tools/driver.py info` でウィンドウ検出を確認 → ゲーム画面が戻っていれば autolive を再起動 |
 | 再接続後、activate していないのに約5秒ごとに PAUSE↔再開を繰り返す（ログに PAUSE 検出が高頻度） | **§17.10: 再接続セッションで合成入力が genuine と認識されない iPhone 本体側の状態。Mac 側の打ち手は無い** | autolive を停止し、**人間に「iPhone 本体の電源再投入が必要」と通知**して待機。ミラーリングの再起動では直らない |
 | `LIFE不足がN回連続` で停止 | きなこパン枯渇 | 復旧不能（ステラは使わない）。人間に「きなこパン補充または周回終了」を通知 |

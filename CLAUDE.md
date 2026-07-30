@@ -140,7 +140,7 @@ python tools/driver.py swipe <x1> <y1> <x2> <y2>
   （モデルは Haiku/Sonnet で足りる）、次を指示する:
   `assets/prompts/supervisor_loop.md を読み、その指示に従って /loop で監視して`
   （自己ペース /loop、目安 20 分間隔）。正常周回中は何もしないのが規律。
-  従来の `nohup tools/supervise_autolive.sh <target_epoch> &` と併用可（プロセス再起動は
+  従来の `nohup tools/ops/supervise_autolive.sh <target_epoch> &` と併用可（プロセス再起動は
   シェル側、状況判断・通知は LLM 側）。
 - **イベント導線ナビ（Phase 4）**: ゲームがホーム画面にあるとき、Claude Code セッションで:
   `assets/prompts/event_navigation.md を読み、ホームからイベントライブ開始まで進めて`

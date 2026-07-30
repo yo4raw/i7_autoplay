@@ -101,5 +101,26 @@ class TestNoCwdRelativeImports(unittest.TestCase):
         self.assertEqual([], offenders)
 
 
+@unittest.skipIf(
+    os.path.exists(os.path.join(ROOT, "docs", "specification.md")),
+    "docs/specification.md の分割（Task 8）まで旧パス参照が残る")
+class TestNoStaleToolPaths(unittest.TestCase):
+    """移動したスクリプトを旧パスで参照している箇所が残っていないこと。
+
+    docs/superpowers/（設計書・計画書）と docs/archive/ は当時の記録なので除外する。
+    """
+
+    EXCLUDE_PREFIXES = ("docs/superpowers/", "docs/archive/")
+
+    def test_no_old_tool_paths_referenced(self):
+        moved = [f.rsplit(".", 1)[0] for f in OPS + PROBES]
+        pattern = r"tools/(" + "|".join(moved) + r")\."
+        r = subprocess.run(["git", "grep", "-nE", pattern], cwd=ROOT,
+                           capture_output=True, text=True)
+        hits = [ln for ln in r.stdout.splitlines()
+                if not ln.startswith(self.EXCLUDE_PREFIXES)]
+        self.assertEqual([], hits, "\n".join(hits))
+
+
 if __name__ == "__main__":
     unittest.main()

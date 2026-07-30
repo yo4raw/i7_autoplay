@@ -48,6 +48,7 @@ LIFE 回復（ユーザー要件）:
   IDOLiSH7 を起動し、イベントライブを1回開始した状態（またはイベント楽曲選択以降）で実行。
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -183,6 +184,14 @@ HOLD_REL_FACTOR = 0.45           # 保持解除のしきい（trigger×これ �
 TRACK_ARRIVE_PX = 34.0           # ノーツがレーン円のこのpx内に来たら打鍵
 TRACK_FORGET_SEC = 6.0           # acted集合を周期クリア（id枯渇/メモリ防止。ライブ跨ぎ）
 KEEPALIVE_GAP_SEC = 0.6          # 無検出がこの秒続いたら genuine 入力を1発（PAUSE防止, 0.7s未満）
+AUTOCAL_RETRY_SEC = 0.5          # --auto-circles: 補正に成功するまでライブ中この間隔で再試行
+AUTOCAL_MAX_SAMPLES = 200        # 多数決に使う検出サンプルの保持上限（古いものから捨てる）
+# 補正結果の永続化先。**プロセス再起動をまたいで即座に正しい円で打鍵する**ため。
+# 補正はライブ開始から確定まで20秒ほどかかるので、supervisor による再起動のたびに
+# 未補正で打鍵する区間が生まれる（実測: 未補正だと MISS 51・グレードB）。
+# ウィンドウサイズをキーにするので機種・ウィンドウを変えても混ざらない。
+AUTOCAL_CACHE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             ".autocal_circles.json")
 # --- 赤ノーツ=フリック（§17.9）。到達直前ROIで赤を検出 → タップ＋外向きスワイプ ---
 FLICK_APPROACH_FRAC = 0.65       # 円と中心の間の検色点（0=中心,1=円）。0.65で色が出る（白飛び前）
 FLICK_RED_MIN_V = 120            # 検色: 明るい画素の閾値
@@ -380,6 +389,8 @@ class AutoLive:
         # --- 円自動キャリブレーション（--auto-circles） ---
         self.auto_circles = auto_circles  # ライブ突入時に円座標を画像から自動補正
         self.circles_calibrated = False   # プロセス内で一度だけ実施
+        self.autocal_next_try = 0.0       # 次に再試行してよい時刻（成功するまで繰り返す）
+        self.autocal_samples = []         # 多数決用に貯める検出サンプル（content相対）
         # --- 実験的トラッキングエンジン（engine="track"）用 ---
         self.engine = engine        # "roi"(既定・現行) / "track"(スポーン検出+追跡)
         self._ne = None             # note_engine モジュール（遅延import）
@@ -390,6 +401,8 @@ class AutoLive:
         self.esc_enabled = esc_enabled  # False で ESC キルスイッチ無効（自律実行用）
         self.last_activate = 0.0
         self.t_start = time.time()
+        if auto_circles:
+            self._load_cached_circles()   # 前回の補正結果があれば起動時点で適用（要 t_start）
         self.menu_since = None      # 同じメニューに留まり始めた時刻
         self.result_since = None    # result/eventresult を送り始めた時刻（無限ループ検知用）
         self._last_dark_check = 0.0  # 暗い画面で pause/songselect を最後に照合した時刻（間引き用）
@@ -622,21 +635,55 @@ class AutoLive:
             self.note_baseline[idx] = base + (wf - base) * NOTE_BASELINE_EMA
         return fired
 
+    def _autocal_key(self):
+        """補正キャッシュのキー。ウィンドウ寸法が変われば別端末/別レイアウトとみなす。"""
+        return f'{int(self.win["w"])}x{int(self.win["h"])}'
+
+    def _load_cached_circles(self):
+        """前回の補正結果を読み、同じウィンドウ寸法なら起動時点で CIRCLES に適用する。
+        壊れたキャッシュは黙って無視する（現行値のまま＝安全側）。"""
+        try:
+            with open(AUTOCAL_CACHE, encoding="utf-8") as fh:
+                cached = json.load(fh).get(self._autocal_key())
+            if not cached or len(cached) != len(CIRCLES):
+                return
+            CIRCLES[:] = [(float(x), float(y)) for x, y in cached]
+            self.circles_calibrated = True
+            self.log(f"[auto-circles] 前回の補正値を復元（{self._autocal_key()}）: {CIRCLES}")
+        except Exception:
+            pass
+
+    def _save_cached_circles(self):
+        try:
+            data = {}
+            if os.path.exists(AUTOCAL_CACHE):
+                with open(AUTOCAL_CACHE, encoding="utf-8") as fh:
+                    data = json.load(fh)
+            data[self._autocal_key()] = [list(c) for c in CIRCLES]
+            with open(AUTOCAL_CACHE, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=1)
+        except Exception as e:
+            self.log(f"[auto-circles] 補正値の保存に失敗（動作には影響なし）: {e}")
+
     def _auto_calibrate_circles(self, frame):
         """--auto-circles: ライブ突入時にタップ円リングを検出し CIRCLES を実測へ補正。
         4円すべてが prior の許容誤差内で一致したときだけ in-place 置換し（roi/keepalive/
         rotate 全読者へ反映）、失敗時は現行値を維持する（誤検出で悪化させない）。
-        失敗時は calibrated を立てず、次のライブ突入時に再試行する（実フレーム実測で
-        単発フルマッチ率 ~86%/SE のため）。"""
+        失敗時は calibrated を立てず、呼び出し側が AUTOCAL_RETRY_SEC 間隔で
+        **成功するまでライブ中ずっと再試行**する。"""
         try:
             if self._ne is None:
                 import note_engine as NE
                 self._ne = NE
             det = self._ne.detect_circles(frame, self.win, self.content)
-            matched = self._ne.match_circles(det, list(CIRCLES))
+            # ライブ中は1フレームで4円そろわないため、検出を貯めて多数決で確定する。
+            self.autocal_samples.extend(det)
+            if len(self.autocal_samples) > AUTOCAL_MAX_SAMPLES:
+                del self.autocal_samples[:-AUTOCAL_MAX_SAMPLES]
+            matched = self._ne.consensus_circles(self.autocal_samples, list(CIRCLES))
             if matched is None:
-                self.log(f"[auto-circles] 検出{len(det)}円が prior と一致せず → "
-                         "現行値を維持（次ライブで再試行）")
+                self.log(f"[auto-circles] 検出{len(det)}円 "
+                         f"(累計{len(self.autocal_samples)}) → まだ確定せず（再試行）")
                 return
             old = list(CIRCLES)
             CIRCLES[:] = matched
@@ -644,6 +691,7 @@ class AutoLive:
             self.tracker = None   # 旧レーン座標で作られた追跡系を破棄（次フレームで再生成）
             self.forecast = None
             self.log(f"[auto-circles] 円座標を実測へ補正: {old} → {matched}")
+            self._save_cached_circles()
         except Exception as e:
             self.log(f"[auto-circles] 失敗（現行値を維持）: {e}")
 
@@ -1034,8 +1082,14 @@ class AutoLive:
                 now = time.time()
                 if self.gameplay_since is None:
                     self.gameplay_since = now
-                    if self.auto_circles and not self.circles_calibrated:
-                        self._auto_calibrate_circles(frame)
+                # 円キャリブレーションは**成功するまでライブ中ずっと再試行**する。
+                # ライブ突入の1フレームだけで試すと、リザルト間の暗転など「リングが
+                # 描画されていない暗いフレーム」を掴んで検出0円で諦め、そのライブ全体を
+                # 未補正のまま打鍵してしまう（実測: 機種差47pxのズレで MISS 51・グレードB）。
+                if self.auto_circles and not self.circles_calibrated \
+                        and now >= self.autocal_next_try:
+                    self.autocal_next_try = now + AUTOCAL_RETRY_SEC
+                    self._auto_calibrate_circles(frame)
                 # リザルト間の暗い遷移(KEEP OUT等)を一瞬 gameplay と誤認してクリアを
                 # 二重計上しないよう、gameplay が一定時間継続して初めて「ライブ中」とみなす。
                 if now - self.gameplay_since > MIN_LIVE_SEC:

@@ -49,6 +49,63 @@ class TestMatchCircles(unittest.TestCase):
         prior = [(0.2, 0.6)]
         self.assertIsNone(NE.match_circles([(0.5, 0.6)], prior, tol=0.06))
 
+    def test_device_scale_offset_is_absorbed(self):
+        """機種差ぶんのズレ（実測 0.072〜0.074）が既定 tol で吸収されること。
+
+        iPhone16系(671x348)では外側2円が約47px=0.07 ずれており、旧 tol=0.06 では
+        match_circles が None を返して補正が不発になった（MISS 51・グレードB）。
+        既定 tol はこの実測ズレを吸収できる値でなければならない。
+        """
+        prior = [(0.16, 0.63), (0.33, 0.85), (0.68, 0.85), (0.84, 0.63)]
+        actual = [(0.228, 0.655), (0.334, 0.824), (0.663, 0.824), (0.771, 0.655)]
+        matched = NE.match_circles(list(reversed(actual)), prior)
+        self.assertEqual(actual, matched, "実測ズレが既定 tol で吸収されていない")
+
+    def test_neighbouring_ring_is_not_cross_matched(self):
+        """tol を緩めても隣の円に誤マッチしないこと（prior の最小間隔は 0.16）。"""
+        prior = [(0.16, 0.63), (0.33, 0.85)]
+        # 1円目に対応する検出が無く、2円目の実測だけがある状況
+        self.assertIsNone(NE.match_circles([(0.334, 0.824)], prior))
+
+
+class TestConsensusCircles(unittest.TestCase):
+    """ライブ中は1フレームで4円そろわないため、時間方向の多数決で確定する。"""
+
+    PRIOR = [(0.16, 0.63), (0.33, 0.85), (0.68, 0.85), (0.84, 0.63)]
+    ACTUAL = [(0.228, 0.655), (0.334, 0.824), (0.663, 0.824), (0.771, 0.655)]
+
+    def _samples(self, per_circle):
+        """各実測円のまわりに微小ゆらぎを付けたサンプル列を作る。"""
+        out = []
+        for i in range(per_circle):
+            d = (i - per_circle // 2) * 0.001
+            for x, y in self.ACTUAL:
+                out.append((x + d, y - d))
+        return out
+
+    def test_confirms_after_enough_samples(self):
+        got = NE.consensus_circles(self._samples(3), self.PRIOR)
+        self.assertIsNotNone(got)
+        for (gx, gy), (ax, ay) in zip(got, self.ACTUAL):
+            self.assertLess(abs(gx - ax), 0.01)
+            self.assertLess(abs(gy - ay), 0.01)
+
+    def test_returns_none_until_enough_samples(self):
+        # 1フレームぶん（各円1サンプル）では確定させない
+        self.assertIsNone(NE.consensus_circles(self._samples(1), self.PRIOR))
+
+    def test_returns_none_when_one_circle_never_detected(self):
+        samples = [s for s in self._samples(5)
+                   if abs(s[0] - self.ACTUAL[3][0]) > 0.01]
+        self.assertIsNone(NE.consensus_circles(samples, self.PRIOR))
+
+    def test_outlier_samples_do_not_move_result(self):
+        samples = self._samples(3) + [(0.50, 0.50)] * 4  # 中央の誤検出（tol外）
+        got = NE.consensus_circles(samples, self.PRIOR)
+        self.assertIsNotNone(got)
+        for (gx, _), (ax, _) in zip(got, self.ACTUAL):
+            self.assertLess(abs(gx - ax), 0.01)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -209,7 +209,12 @@ class Tracker:
 
 # --- タップ円の自動キャリブレーション（--auto-circles, 機種非依存化） ---
 CIRCLE_BAND_Y0 = 0.50      # 円検出の下帯（content相対yの開始）
-CIRCLE_MATCH_TOL = 0.06    # prior との許容誤差（content相対距離）
+CIRCLE_MATCH_TOL = 0.10    # prior との許容誤差（content相対距離）。
+# 0.06 だと**機種差を吸収できず不発**だった: iPhone16系(671x348)の実測ズレは
+# 外側2円で 0.072〜0.074（約47px）あり、tol を超えて match_circles が None を返し
+# 現行CIRCLES（SE実測値）のまま打鍵→MISS 51・グレードB になった（2026-07-31）。
+# prior 同士の xf 間隔は最小 0.16 なので、0.10 でも隣接円への誤マッチは起きない
+# （実フレームでカウントダウン円などのノイズが混じっても正しく4円へ1対1マッチすることを確認）。
 CIRCLE_R_FRAC = 0.05       # 円リング半径の目安（ウィンドウ幅相対。SE実測 ~26px/529w）
 
 
@@ -233,6 +238,33 @@ def detect_circles(frame_rgb, win, content):
         for cx, cy, r in found[0]:
             out.append((float(cx) / W, (float(cy) + y0 - top) / ch))
     return out
+
+
+CIRCLE_MIN_SAMPLES = 3     # 多数決に必要な、prior 1円あたりの検出サンプル数
+
+
+def consensus_circles(samples, prior, tol=CIRCLE_MATCH_TOL,
+                      min_samples=CIRCLE_MIN_SAMPLES):
+    """複数フレームぶんの検出サンプルから、prior 各円の位置を多数決で確定する。
+
+    ライブ中はノーツ・タップ波紋・演出で Hough 検出が不安定になり、1フレームでは
+    4円そろわない（実測: 1〜4円がばらつく）。静止しているリングを **時間方向に
+    積み上げて中央値** を取ることで、単発の誤検出と取りこぼしの両方を吸収する。
+
+    prior 全円が min_samples 以上の裏付けを得たときだけ prior と同順のリストを返し、
+    足りなければ None（呼び出し側は現行値を維持＝誤検出で悪化させない）。
+    """
+    result = []
+    for pxf, pyf in prior:
+        near = [(x, y) for x, y in samples
+                if ((x - pxf) ** 2 + (y - pyf) ** 2) ** 0.5 < tol]
+        if len(near) < min_samples:
+            return None
+        xs = sorted(x for x, _ in near)
+        ys = sorted(y for _, y in near)
+        mid = len(near) // 2
+        result.append((xs[mid], ys[mid]))
+    return result
 
 
 def match_circles(detected, prior, tol=CIRCLE_MATCH_TOL):

@@ -4,9 +4,9 @@
 # 検知条件:
 #   A) cardx停滞 warn が前回チェックから2回以上増加（「ライフを全回復しました」フリーズ等）
 #   B) supervisor の launch attempt が4回以上増加したのに クリア数が増えていない（一般的な膠着）
-# 使い方: tools/freeze_sentinel.sh <target_epoch>
+# 使い方: tools/ops/freeze_sentinel.sh <target_epoch>
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 source .venv/bin/activate
 TARGET="${1:?usage: freeze_sentinel.sh <target_epoch>}"
 LOG="/tmp/i7_autorun.log"
@@ -46,9 +46,9 @@ while :; do
     slog "max recoveries exceeded; giving up"; touch /tmp/i7_freeze_unrecovered; exit 1
   fi
   pkill -f supervise_autolive.sh; pkill -f "autolive.py"; sleep 2
-  if python -u tools/recover_freeze.py >> "$SLOG" 2>&1; then
+  if python -u tools/ops/recover_freeze.py >> "$SLOG" 2>&1; then
     slog "recovery OK -> relaunch supervisor"
-    nohup tools/supervise_autolive.sh "$TARGET" > /dev/null 2>&1 &
+    nohup tools/ops/supervise_autolive.sh "$TARGET" > /dev/null 2>&1 &
     sleep 30   # 周回立ち上がり待ち（直後の attempt 増をトリガ誤検知しないよう同期し直す）
     base_att=$(grep -c "launch attempt" "$SUPLOG" 2>/dev/null || echo 0)
     base_warn=$(grep -c "閉じられず停滞" "$LOG" 2>/dev/null || echo 0)

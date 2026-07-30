@@ -5,14 +5,14 @@ mss でフレームを読むだけ（クリック・activate を一切しない�
 tests/corpus_raw/<state>/ に保存する。データ駆動化のパリティコーパス＋ assets/screens の
 _full.png 原本の材料になる。
 
-使い方: python -u tools/corpus_collector.py <duration_sec> [out_dir]
+使い方: python -u tools/ops/corpus_collector.py <duration_sec> [out_dir]
 停止:   /tmp/i7_collector_stop を touch するか duration 経過で終了。
 """
 import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import driver  # noqa: E402
 import autolive  # noqa: E402
 
@@ -28,7 +28,8 @@ INTERVAL = 0.5              # 観測周期（秒）。周回プロセスのCPU�
 def main():
     dur = float(sys.argv[1]) if len(sys.argv) > 1 else 3600.0
     out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tests", "corpus_raw")
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "tests", "corpus_raw")
     os.makedirs(out, exist_ok=True)
 
     al = autolive.AutoLive(max_loops=1, dry_run=True, verbose=False)  # 入力封印

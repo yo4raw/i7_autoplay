@@ -1,7 +1,7 @@
 """PAUSE監視（合成keepaliveを送らない）。本物の入力でPAUSEが止まるかの検証用。
 PAUSEを検出したら再開だけ行い、5秒ごとにPAUSE回数を出力する。§17.7 調査。"""
 import sys, time, os
-sys.path.insert(0, 'tools')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import driver, autolive
 
 os.environ['I7_CLICK_MODE'] = '0'

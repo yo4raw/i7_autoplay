@@ -1,7 +1,8 @@
 """どの操作がポーズを引き起こすか切り分け（§17.8）。ライブ中に1種類の操作だけを繰り返し、
 ポーズ発生を観測する。mode: activate / warp / click / tap / nothing。"""
 import sys, time
-sys.path.insert(0, 'tools')
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import driver, autolive
 import Quartz
 

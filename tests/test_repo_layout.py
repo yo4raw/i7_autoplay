@@ -40,6 +40,12 @@ class TestToolsLayout(unittest.TestCase):
     def test_ops_scripts_are_under_ops(self):
         self.assertEqual(sorted(OPS), _scripts_in(os.path.join(TOOLS, "ops")))
 
+    def test_probe_scripts_are_under_probes(self):
+        self.assertEqual(sorted(PROBES), _scripts_in(os.path.join(TOOLS, "probes")))
+
+    def test_production_scripts_stay_at_tools_root(self):
+        self.assertEqual(sorted(PROD), _scripts_in(TOOLS))
+
 
 class TestScriptsAreValid(unittest.TestCase):
     def _all_scripts(self):
@@ -76,6 +82,23 @@ class TestOpsPathResolution(unittest.TestCase):
                         self.assertTrue(os.path.exists(p), f"{name}.{attr} = {p}")
         finally:
             sys.path.remove(opsdir)
+
+
+class TestNoCwdRelativeImports(unittest.TestCase):
+    """`sys.path.insert(0, 'tools')` は実行時のカレントディレクトリに依存する。
+    移動後は __file__ 基準に統一する。"""
+
+    def test_no_cwd_relative_syspath(self):
+        offenders = []
+        for d in (TOOLS, os.path.join(TOOLS, "ops"), os.path.join(TOOLS, "probes")):
+            for f in _scripts_in(d):
+                if not f.endswith(".py"):
+                    continue
+                p = os.path.join(d, f)
+                with open(p, encoding="utf-8") as fh:
+                    if "sys.path.insert(0, 'tools')" in fh.read():
+                        offenders.append(p)
+        self.assertEqual([], offenders)
 
 
 if __name__ == "__main__":

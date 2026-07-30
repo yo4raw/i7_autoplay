@@ -1,7 +1,8 @@
 """完全受動観測（ゼロ入力）。クリック・タップ・カーソル移動・activate を一切行わず、
 mss で画面を読むだけ。ライブ中にポーズが起きるか（=操作しなければポーズにならない説）を検証。"""
 import sys, time
-sys.path.insert(0, 'tools')
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import driver, autolive
 
 al = autolive.AutoLive(max_loops=1, dry_run=True, verbose=False)  # dry_run=True で念のため入力封印

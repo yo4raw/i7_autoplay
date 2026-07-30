@@ -84,7 +84,8 @@ if __name__ == "__main__":
     dur = float(sys.argv[3]) if len(sys.argv) > 3 else 0   # 0=無限
     pts = None
     if mode == "move":
-        sys.path.insert(0, 'tools')
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
         import driver
         w = driver.find_window()
         # ミラーリングウィンドウ内の安全な2点（ノーツ円から離れた上辺寄り）を往復

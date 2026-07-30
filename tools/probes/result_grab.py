@@ -1,7 +1,8 @@
 """リザルト画面を受動的にキャプチャ（精度ベースライン計測用）。入力は一切送らない（mss読みのみ）。
 result/eventresult を検出したら1リザルトにつき1枚保存する。"""
 import sys, time
-sys.path.insert(0, 'tools')
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import driver, autolive
 from PIL import Image
 

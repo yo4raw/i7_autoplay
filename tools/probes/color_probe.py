@@ -2,7 +2,8 @@
 円(CIRCLE)とARC_CENTERの間の数点でROIを取り、彩度の高いノーツ画素の色を分類して記録する。
 タップはしない（純粋観測）。色が分離できる approach fraction を見つける。"""
 import sys, time
-sys.path.insert(0, 'tools')
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import driver, autolive
 import numpy as np
 from PIL import Image

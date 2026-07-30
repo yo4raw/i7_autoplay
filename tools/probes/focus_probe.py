@@ -2,7 +2,7 @@
 activate も打鍵もしない（--tap で genuine 打鍵を併用可）。PAUSE 直前に最前面が
 ミラーリングから外れていないか（=フォーカス喪失が PAUSE 主因か）を切り分ける。
 
-使い方: python tools/focus_probe.py [dur] [--tap] [--resume]
+使い方: python tools/probes/focus_probe.py [dur] [--tap] [--resume]
 """
 import sys
 import time

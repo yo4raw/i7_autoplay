@@ -1,7 +1,7 @@
 #!/bin/zsh
 # genuine入力方式のA/B: 各modeで autolive を一定秒走らせ PAUSE数/クリア数を集計。
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 source .venv/bin/activate
 SECS="${1:-45}"
 shift 2>/dev/null || true

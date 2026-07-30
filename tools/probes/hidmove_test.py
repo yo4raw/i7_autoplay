@@ -1,7 +1,8 @@
 """IOHIDPostEvent の連続カーソル移動が PAUSE を防ぐかをクリーンに検証（§17.8）。
 autolive のワープを混ぜず、ウィンドウ内で円を描く実HID移動だけを続け、PAUSE数を測る。"""
 import sys, time, math
-sys.path.insert(0, 'tools')
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import driver, autolive, idlekeeper
 import Quartz
 

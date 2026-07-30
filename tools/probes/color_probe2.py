@@ -1,7 +1,8 @@
 """緑/青ノーツ判別の実現性確認(HSV)。到達直前ROI(0.65)の明るい画素をHSVで見て、
 高彩度の緑/青が通常ノーツ(青白・低彩度)と分離できるか調べる。ラベル付きフレーム保存。"""
 import sys, time
-sys.path.insert(0, 'tools')
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import driver, autolive
 import numpy as np, colorsys
 from PIL import Image

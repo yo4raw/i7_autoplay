@@ -2,7 +2,8 @@
 （最前面アプリ・iPhoneミラーリングのアクティブ/最前面・カーソル位置）が何か変化するかを観測。
 ユーザー指摘『iOSは合成/本物を区別できない→原因はMac側』を検証する。"""
 import sys, time
-sys.path.insert(0, 'tools')
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import driver, autolive
 import Quartz
 from AppKit import NSWorkspace, NSRunningApplication

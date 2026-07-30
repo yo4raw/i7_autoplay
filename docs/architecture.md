@@ -213,20 +213,20 @@ PoC として、実際に**ライブを自動で繰り返しクリアし続け�
 一連を無人で繰り返すことを確認（1ライブ≈90秒）。`mss`＋明るさゲート＋座標補正で安定動作。
 
 **v0.3 で確定・実装した事項（2026-06-04 追補）**
-- **PAUSE 再開バグ修正**: 見出しでなく固定の再開ボタン位置 `P_RESUME` をクリック（`specification.md` §17.6 D）。
+- **PAUSE 再開バグ修正**: 見出しでなく固定の再開ボタン位置 `P_RESUME` をクリック（[navigation.md](navigation.md)「(D) PAUSE メニューの正確な仕様（重大バグ修正済み）」）。
 - **ポストライブ・フローをテンプレ駆動に刷新**（盲目巡回 `ADVANCE_POINTS` を廃止）:
   判定順 `lifeshort → friendreq → replay → rankup → closex → download → result → menu`。
   per-song Result / EVENT RESULT は**中央タップ**で送る（下端タップでは進まない）。
 - **RANK UP** は固定×位置 `P_RANKUP_X=(0.802,0.251)` で閉じる（プレイヤーランク上昇時に
   **LIFE が MAX 回復＆上限増加**するため、LIFE 供給源にもなっている）。
 - **連続ライブ再プレイ「はい」** を `replay_title.png` で検出して押下（ループの要）。
-- **LIFE 回復＝きなこパン**（`specification.md` §17.6 D-LIFE）。**ステラは一切クリックしない**多重安全装置。
+- **LIFE 回復＝きなこパン**（[navigation.md](navigation.md)「(D-LIFE) LIFE 回復ダイアログ＝きなこパンで回復（ステラ厳禁）— 2026-06-04 実測・実装済み」）。**ステラは一切クリックしない**多重安全装置。
 - **ステラ安全装置**: 未知の明るいダイアログ／閉じられないポップアップは
   `STUCK_STOP_SEC`(25s) で**停止＋スクショ**。確定ボタンの盲目クリックを完全廃止。
 - 座標系を整理: スクショ実測座標は `click_window`（ウィンドウ相対）で扱う。
 
 **残課題 / 今後**
-- ~~ゲームプレイ中の定期 PAUSE~~ → **解決済み（`specification.md` §17.6 F）**。HIDSystemState イベントソース＋
+- ~~ゲームプレイ中の定期 PAUSE~~ → **解決済み（[device-findings.md](device-findings.md)「PAUSE の解決策（2026-06-05）」）**。HIDSystemState イベントソース＋
   実カーソルワープでクリックすることで PAUSE 0・無人で連続クリア可能になった。
 - iPhone 切断（「iPhoneが見つかりません」/「iPhoneが使用されました」）時の自動再接続。
   ※「iPhoneが使用された」場合はミラーリングが終了する。本ツールはホスト側で

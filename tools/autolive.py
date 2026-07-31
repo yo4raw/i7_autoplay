@@ -395,6 +395,8 @@ class AutoLive:
         self.circles_calibrated = False   # プロセス内で一度だけ実施
         self.autocal_next_try = 0.0       # 次に再試行してよい時刻（成功するまで繰り返す）
         self.autocal_samples = []         # 多数決用に貯める検出サンプル（content相対）
+        self._roi_scale_key = None        # ROI半径スケールのキャッシュキー（CIRCLES変更で無効化）
+        self._roi_scales = None
         # --- 実験的トラッキングエンジン（engine="track"）用 ---
         self.engine = engine        # "roi"(既定・現行) / "track"(スポーン検出+追跡)
         self._ne = None             # note_engine モジュール（遅延import）
@@ -565,6 +567,33 @@ class AutoLive:
         self._click_screen(*self.pixel_to_screen(pos_px[0] + off[0], pos_px[1] + off[1]))
 
     # --- タイミング検出（timing モード） ---
+    def _roi_scale(self, idx):
+        """円 idx のROI半径スケール（レーン間のタイミング偏りを打ち消す）。
+
+        ノーツは ARC_CENTER から各円へ**同じ拍で**飛んでくるので、遠い円ほど速い。
+        ROI半径が全レーン固定だと「中心から r px 手前で発火」の r が同じでも、
+        速いレーンでは r を横切るのに要する**時間が短い**＝時間的に早く発火する。
+        実測(671x348): 移動距離は 144.8〜193.6px（1.34倍差）で、発火位置は移動距離比の
+        12.1%〜16.2% とレーン間で 4.1 ポイントばらついていた。これが GOOD 過多の一因。
+
+        半径を「その円の移動距離 ÷ 平均移動距離」で伸縮すると r/d が全レーンで一定になり、
+        発火が到達までの**同じ時間割合**に揃う。平均は変えないので note_roi の意味は保つ。
+        """
+        key = tuple(CIRCLES)
+        if self._roi_scale_key != key:
+            top, bottom = self.content
+            ch = bottom - top
+            w = self.win["w"]
+            dists = []
+            for xf, yf in CIRCLES:
+                dx = (ARC_CENTER[0] - xf) * w
+                dy = (ARC_CENTER[1] - yf) * ch
+                dists.append((dx * dx + dy * dy) ** 0.5)
+            mean = sum(dists) / len(dists)
+            self._roi_scales = [d / mean if mean > 0 else 1.0 for d in dists]
+            self._roi_scale_key = key
+        return self._roi_scales[idx]
+
     def _circle_roi_px(self, idx):
         """円 idx の判定ROI（フレームpx）を返す: (x0, y0, x1, y1)。
         円中心を ARC_CENTER 方向へ note_lead ぶん寄せて早撃ち補正する。"""
@@ -576,7 +605,7 @@ class AutoLive:
         ch = bottom - top
         cx = self.win["w"] * xf
         cy = top + yf * ch
-        r = self.win["w"] * self.note_roi
+        r = self.win["w"] * self.note_roi * self._roi_scale(idx)
         return (int(cx - r), int(cy - r), int(cx + r), int(cy + r))
 
     def _roi_white_frac(self, frame, idx):

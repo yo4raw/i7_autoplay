@@ -163,7 +163,7 @@ TAP_MODE_DEFAULT = "timing"
 # タイミング検出のパラメータ（--calibrate と --note-* で実機調整可能。docs/specification.md §17.5）。
 ARC_CENTER = (0.49, 0.50)        # ノーツ放射の中心（円ROIを早撃ち方向へ寄せる基準）
 NOTE_ROI_RADIUS = 0.035          # 円ROI半径（ウィンドウ幅相対, ~18px@529w）
-NOTE_ROI_LEAD = 0.025            # ROIを ARC_CENTER 側へ寄せる量＝取得+クリック遅延の早撃ち補正。
+NOTE_ROI_LEAD = 0.05             # ROIを ARC_CENTER 側へ寄せる量＝取得+クリック遅延の早撃ち補正。
                                  # 実測較正(EASY/SOL TRIGGER): 0.04→0.025 で MISS 12→9・SS昇格・
                                  # スコア+14k。0.015 は早撃ち不足で PERFECT 低下。ループ高速化
                                  # (pause照合間引き=DARK_RECHECK_SEC)でレイテンシ減→leadを縮小。
@@ -185,6 +185,13 @@ HOLD_REL_FACTOR = 0.45           # 保持解除のしきい（trigger×これ �
 TRACK_ARRIVE_PX = 34.0           # ノーツがレーン円のこのpx内に来たら打鍵
 TRACK_FORGET_SEC = 6.0           # acted集合を周期クリア（id枯渇/メモリ防止。ライブ跨ぎ）
 KEEPALIVE_GAP_SEC = 0.6          # 無検出がこの秒続いたら genuine 入力を1発（PAUSE防止, 0.7s未満）
+# フレンド選択→編成の遷移中、イベント装飾の帯を cardx と誤検出して右上の × を
+# 押してしまうため、この秒数は cardx を無視して編成画面(START)の出現を待つ。
+# ROI半径をレーンの移動距離に比例させるか。理論上はレーン間のタイミングを揃えるが、
+# 実測では改善が誤差に埋もれ（P33→P29）、実機の体感でも遅く感じるとの指摘があったため
+# **既定オフ**（既知の良好構成＝全レーン固定半径に戻す）。効果を分布で確認できたら既定へ。
+ROI_SCALE_BY_DISTANCE = False
+CARDX_SUPPRESS_SEC = 3.5
 AUTOCAL_RETRY_SEC = 0.5          # --auto-circles: 補正に成功するまでライブ中この間隔で再試行
 AUTOCAL_MAX_SAMPLES = 200        # 多数決に使う検出サンプルの保持上限（古いものから捨てる）
 # 補正結果の永続化先。**プロセス再起動をまたいで即座に正しい円で打鍵する**ため。
@@ -216,6 +223,9 @@ TEMPLATES = {
     # アプリ再起動後に出る「ライブスタート前にアプリが終了しました。前回のライブを再開
     # しますか？」→ **はい**。LIFE は既に消費済みなので、いいえ を選ぶと丸損になる。
     "resumelive": ("resume_live.png", 0.85),
+    # 周回対象曲「Don't Analyze Me」の一覧行（ユーザー指定: 効率が良いので毎回これを選ぶ）。
+    # 選択中は緑ハイライト、未選択は暗背景で見た目が変わるため variant を併用する。
+    "songdaz": ("song_dontanalyze.png", 0.80),
     "liveassist": ("live_assist.png", 0.85),   # ライブアシスト選択画面 → 何も選ばず START（消費なし）
     # 旧 download_btn.png は「ライブの説明」チュートリアル等を誤検出(0.88)したため撤去。
     # DL確認は dldialog（本文テンプレ, 0.85）でのみ判定する。
@@ -244,7 +254,10 @@ DARK_THRESH = 65.0
 # 暗い画面（gameplay/PAUSE）では、重い pause/songselect テンプレ照合を毎フレームせず
 # この秒数おきに間引く。PAUSE・暗いsongselectはタイミング非依存なので数フレーム遅れて
 # 検出してよく、間引くぶんノーツ検出のサンプリングレートが上がり打鍵精度が向上する。
-DARK_RECHECK_SEC = 0.25
+DARK_RECHECK_SEC = 0.7
+# ライブ中の PAUSE 見出しの出現範囲（実測: コーパス37枚すべてで x≈0.50, y=0.27〜0.36）。
+# 余裕を持たせても全画面の 1/4 以下で済み、照合コストが大幅に下がる。
+PAUSE_SEARCH_BOX = (0.25, 0.10, 0.75, 0.55)
 # 未知の明るいダイアログにこの秒数留まったら、ステラ誤使用を避けて停止する。
 # （LIFE 回復ダイアログ等の未知画面でボタンを盲目クリックしないための安全装置）
 STUCK_STOP_SEC = 25.0
@@ -354,6 +367,49 @@ def match_multiscale(frame_bgr, templ):
     return best
 
 
+def match_in_box(frame_bgr, imgs, box):
+    """フレームの一部だけを照合して (score, 全画面座標の中心) を返す。
+
+    フレーム全体のマルチスケール照合は重く（実測 246ms/回）、ライブ中に毎 0.25 秒
+    走らせると打鍵ループがほぼ止まる（実測 3.3 FPS）。位置が安定している見出しは
+    探索範囲を絞れば同じ結果をはるかに安く得られる。
+    """
+    h, w = frame_bgr.shape[:2]
+    x0, y0, x1, y1 = box
+    px0, py0 = int(w * x0), int(h * y0)
+    sub = frame_bgr[py0:int(h * y1), px0:int(w * x1)]
+    if sub.size == 0:
+        return 0.0, None
+    score, pos = match_best(sub, imgs)
+    if pos is None:
+        return score, None
+    return score, (pos[0] + px0, pos[1] + py0)
+
+
+def match_topmost(frame_bgr, imgs, thresh, min_gap_px=18):
+    """閾値を超えるマッチのうち **最も上（yが小さい）** の中心を返す: (score, (x, y)) or (0, None)。
+
+    フレンド一覧のように同じラベルが複数行に並ぶ画面で、「一番上の行」を確実に選ぶために使う。
+    match_best は最良スコアの1件しか返さないため、どの行に当たるかが実行ごとに変わる。
+    """
+    best = (0.0, None)
+    for templ in imgs:
+        fh, fw = frame_bgr.shape[:2]
+        for s in SCALES:
+            t = templ if s == 1.0 else cv2.resize(templ, None, fx=s, fy=s,
+                                                  interpolation=cv2.INTER_AREA)
+            th, tw = t.shape[:2]
+            if th > fh or tw > fw:
+                continue
+            res = cv2.matchTemplate(frame_bgr, t, cv2.TM_CCOEFF_NORMED)
+            ys, xs = np.where(res >= thresh)
+            for y, x in zip(ys, xs):
+                cy = y + th / 2
+                if best[1] is None or cy < best[1][1] - min_gap_px:
+                    best = (float(res[y, x]), (x + tw / 2, cy))
+    return best
+
+
 class AutoLive:
     def __init__(self, max_loops, dry_run=False, verbose=False, max_seconds=None,
                  tap_mode=TAP_MODE_DEFAULT, note_trigger=NOTE_TRIGGER_FRAC,
@@ -395,6 +451,9 @@ class AutoLive:
         self.circles_calibrated = False   # プロセス内で一度だけ実施
         self.autocal_next_try = 0.0       # 次に再試行してよい時刻（成功するまで繰り返す）
         self.autocal_samples = []         # 多数決用に貯める検出サンプル（content相対）
+        self.suppress_cardx_until = 0.0   # この時刻までは cardx を無視（フレンド選択直後）
+        self.tap_count = 0                # 1ライブ中の打鍵回数（検出不足か位置ズレかの切り分け用）
+        self.frame_count = 0              # 1ライブ中の判定フレーム数（実効ループ周波数の把握）
         self._roi_scale_key = None        # ROI半径スケールのキャッシュキー（CIRCLES変更で無効化）
         self._roi_scales = None
         # --- 実験的トラッキングエンジン（engine="track"）用 ---
@@ -579,6 +638,8 @@ class AutoLive:
         半径を「その円の移動距離 ÷ 平均移動距離」で伸縮すると r/d が全レーンで一定になり、
         発火が到達までの**同じ時間割合**に揃う。平均は変えないので note_roi の意味は保つ。
         """
+        if not ROI_SCALE_BY_DISTANCE:
+            return 1.0
         key = tuple(CIRCLES)
         if self._roi_scale_key != key:
             top, bottom = self.content
@@ -866,9 +927,11 @@ class AutoLive:
                 self.click_content(*CIRCLES[i])  # 通常タップ（down+up）
             self.note_last_tap[i] = now
             self.last_input_ts = now
+            self.tap_count += 1
             tapped = True
         if not tapped:
             self._keepalive(now)
+        self.frame_count += 1
         time.sleep(0.005)
 
     def _gameplay_track(self, frame, now):
@@ -976,7 +1039,11 @@ class AutoLive:
             now_t = time.time()
             if now_t - self._last_dark_check >= DARK_RECHECK_SEC:
                 self._last_dark_check = now_t
-                if m("pause"):
+                # 探索範囲を絞って照合（全画面照合は重すぎて打鍵ループを止めてしまう）
+                imgs, thr = self.templates["pause"]
+                score, pos = match_in_box(frame, imgs, PAUSE_SEARCH_BOX)
+                res["pause"] = (score, thr, pos)
+                if score >= thr:
                     return "pause", res
                 if bright > 50.0 and m("songselect"):
                     return "songselect", res
@@ -1019,7 +1086,10 @@ class AutoLive:
             return "formation", res
         # 汎用カードポップアップ（報酬獲得/アイテム獲得/獲得一覧 等）の×を色検出で閉じる
         # （端末非依存）。専用ダイアログ判定の後・result の前（Result の上に重なって出るため）。
-        cardx = detect_card_x(frame_rgb)
+        # getattr: detect() は result_log 等の外部ツールからも __new__ 生成の
+        # インスタンスで呼ばれるため、属性が無くても動くようにする。
+        cardx = None if time.time() < getattr(self, "suppress_cardx_until", 0.0) \
+            else detect_card_x(frame_rgb)
         if cardx is not None:
             res["cardx"] = (1.0, 0, cardx)
             return "cardx", res
@@ -1163,7 +1233,7 @@ class AutoLive:
                     self.log(f"★ライブ クリア（通算 {self.loops_done}）")
                 self.log("フレンド申請 → 申請する")
                 self.click_match(res["friendreq"][2])
-                time.sleep(0.8)
+                time.sleep(0.5)   # ライブ間を詰める（ユーザー要件: 最速で次のライブへ）
             elif state == "replay":
                 # 連続ライブ再プレイ確認 → 「はい」で同じ曲を再開（次のループへ）。
                 if self.was_in_live:
@@ -1172,7 +1242,7 @@ class AutoLive:
                     self.log(f"★ライブ クリア（通算 {self.loops_done}）")
                 self.log("連続ライブ 再プレイ → はい")
                 self.click_anchor(res["replay"][2], ANCH_REPLAY_YES)  # マッチ位置+オフセット（画像追従）
-                time.sleep(1.2)
+                time.sleep(0.9)   # 再プレイ「はい」→ライブ開始まで。詰めすぎると二度押し
             elif state == "cardx":
                 # 汎用カードポップアップ（報酬獲得/アイテム獲得/RANK UP 等）。**×でなく背景の
                 # どこをタップしても閉じる**ため、色検出した×位置（背景汚染でばらつく）ではなく
@@ -1190,7 +1260,7 @@ class AutoLive:
                     break
                 self.log("カードポップアップ → 背景タップで閉じる")
                 self.click_window(*P_CARD_DISMISS)
-                time.sleep(0.5)
+                time.sleep(0.35)  # ポップアップは連続で出るので1枚あたりを詰める
             elif state == "closex":
                 # カード型ポップアップ（獲得一覧 / 報酬獲得 / 申請完了 / 本日の課題 等）の×。
                 # 閉じられず同じ画面に留まる場合は watchdog で停止（誤クリック無限ループ防止）。
@@ -1233,22 +1303,39 @@ class AutoLive:
                 # **ユーザー要件: 楽曲は変更しない**。曲リスト（左側）は絶対にタップせず、現在
                 # 選択中の曲のまま進める。ここで触るのは EASY タブ（右下・難易度）と NEXT のみ。
                 # NEXTテンプレのマッチ位置を直接クリック（端末非依存）。次状態で再検出して進める。
-                self.log("楽曲選択に戻った → EASY 選択 → NEXT（曲は変更しない）")
-                self.click_window(*P_EASY_TAB)   # EASY タブを選択（難易度のみ。曲は変えない）
-                time.sleep(0.6)
+                # **ユーザー要件: 毎回「Don't Analyze Me」を選ぶ**（イベント効率が良い曲）。
+                # 一覧行をテンプレで探して当たればタップ。見つからなければ曲は変更しない
+                # （スクロール位置により画面外のことがあるため、無理に探し回らない＝安全側）。
+                sc, pos = match_best(frame, self.templates["songdaz"][0])
+                if pos is not None and sc >= TEMPLATES["songdaz"][1]:
+                    self.log(f"楽曲選択 → Don't Analyze Me を選択 (score={sc:.2f})")
+                    self.click_match(pos)
+                    time.sleep(0.5)
+                else:
+                    self.log(f"楽曲選択 → 対象曲が見つからず曲は変更しない (score={sc:.2f})")
+                self.click_window(*P_EASY_TAB)   # EASY タブを選択（難易度）
+                time.sleep(0.5)
                 self.click_match(res["songselect"][2])
-                time.sleep(1.6)
+                time.sleep(1.4)
             elif state == "friendselect":
-                # フレンド（サポート）選択 → アピールスキル ラベル（=フレンド行内）の位置を
-                # 直接タップして選択（行全体が選択ボタン。実機で選択→編成へ遷移を確認）。
-                self.log("フレンド選択 → フレンド選択")
-                self.click_match(res["friendselect"][2])
-                time.sleep(1.8)
+                # フレンド（サポート）選択 → **必ず一番上の行**（ユーザー要件）。
+                # アピールスキル ラベルは全行に出るため、最良スコアではなく最上段を選ぶ。
+                score, pos = match_topmost(frame, self.templates["friendselect"][0],
+                                           TEMPLATES["friendselect"][1])
+                if pos is None:
+                    pos = res["friendselect"][2]
+                self.log("フレンド選択 → 最上段を選択")
+                self.click_match(pos)
+                # 直後は編成画面への遷移アニメ中。イベント装飾の帯を cardx と誤検出して
+                # 右上の × を押してしまうため、この間は cardx を無視して START を待つ
+                # （ユーザー要件: フレンド選択後は余計なタップをせず即 START）。
+                self.suppress_cardx_until = time.time() + CARDX_SUPPRESS_SEC
+                time.sleep(1.0)
             elif state == "formation":
                 # 編成画面 → START（STARTテンプレのマッチ位置を直接クリック・端末非依存）。
                 self.log("編成画面 → START")
                 self.click_match(res["formation"][2])
-                time.sleep(2.5)
+                time.sleep(2.0)
             elif state in ("dldialog", "download"):
                 # データDL確認 → 必ず「ダウンロード」を押す（ユーザー指定）。中央アンカー。
                 self.log("DLダイアログ → ダウンロード")
@@ -1276,7 +1363,10 @@ class AutoLive:
                 if self.was_in_live:
                     self.loops_done += 1
                     self.was_in_live = False
-                    self.log(f"★ライブ クリア（通算 {self.loops_done}）")
+                    self.log(f"★ライブ クリア（通算 {self.loops_done}）"
+                             f" 打鍵{self.tap_count}回 / 判定{self.frame_count}フレーム")
+                    self.tap_count = 0
+                    self.frame_count = 0
                     self.result_since = None  # クリア計上＝進捗。停滞タイマーをリセット
                 # 想定外オーバーレイ（iOSシステムダイアログ等）で result 誤判定→中央タップが
                 # 効かず無限ループするのを検知して停止（スクショ保存）。
@@ -1291,7 +1381,7 @@ class AutoLive:
                              f"{fn} 保存して停止（システムダイアログ等のオーバーレイの可能性）。")
                     break
                 self.click_center_off(OFF_RESULT_ADV)  # 画面中央タップで送る
-                time.sleep(0.5)
+                time.sleep(0.35)  # リザルト送りの中央タップ間隔
             else:  # menu: 未知の明るい画面（ローディング/遷移/未知ダイアログ）
                 # **未知画面ではクリックしない**（誤爆して別画面へ迷い込む＝連鎖暴走やステラ
                 # 誤使用を防ぐ）。短い遷移は待てば次状態へ解決する。一定時間抜けられなければ

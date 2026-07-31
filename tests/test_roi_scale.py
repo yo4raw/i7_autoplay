@@ -16,7 +16,8 @@ CIRCLES_671 = [(0.22801788, 0.65581396), (0.33353205, 0.83122925),
                (0.66259315, 0.82325582), (0.76989573, 0.65581396)]
 
 
-def make_al(circles, w=671, h=348):
+def make_al(circles, w=671, h=348, scale_by_distance=True):
+    AL.ROI_SCALE_BY_DISTANCE = scale_by_distance
     al = AL.AutoLive.__new__(AL.AutoLive)
     al.win = {"x": 0, "y": 0, "w": w, "h": h}
     al.content = (38, h - 9)
@@ -29,8 +30,20 @@ def make_al(circles, w=671, h=348):
 
 
 class TestRoiScale(unittest.TestCase):
+    """ROI_SCALE_BY_DISTANCE=True のときの挙動を固定する。
+
+    既定はオフ（実測で改善が誤差に埋もれ、実機の体感でも遅いと指摘されたため）。
+    有効化したときに理屈どおり動くことは、再度検証するときのために残しておく。
+    """
+
     def tearDown(self):
         AL.CIRCLES[:] = [(0.16, 0.63), (0.33, 0.85), (0.68, 0.85), (0.84, 0.63)]
+        AL.ROI_SCALE_BY_DISTANCE = False
+
+    def test_disabled_by_default_keeps_uniform_radius(self):
+        al = make_al(CIRCLES_671, scale_by_distance=False)
+        scales = [al._roi_scale(i) for i in range(len(CIRCLES_671))]
+        self.assertEqual([1.0] * len(CIRCLES_671), scales)
 
     def _fire_fractions(self, al):
         """各レーンの「発火位置 ÷ 移動距離」。揃っているほどタイミングが均一。"""

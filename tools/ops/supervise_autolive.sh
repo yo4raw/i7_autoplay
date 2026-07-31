@@ -12,10 +12,10 @@ SUPLOG="/tmp/i7_supervisor.log"
 # 打鍵オプション。実機検証で確定した値を既定にする（2026-07-31）:
 #   --auto-circles : 機種差の円ズレを自動補正。これが無いと MISS 51・グレードB になる
 #                    （補正値は .autocal_circles.json にキャッシュされ再起動時に即復元）
-#   --note-lead 0.04 : 早撃ち量の実測最適値（0.025→P14/GOOD70、0.04→P33、0.055→P22）
+#   （--note-lead は指定しない: 打鍵ループ高速化で最適値が変わったため autolive の既定に従う）
 #   --flick        : 赤ノーツのフリック（既存）
 # 上書きしたいときは I7_TAP_OPTS 環境変数で丸ごと差し替える。
-TAP_OPTS="${I7_TAP_OPTS:---flick --auto-circles --note-lead 0.04}"
+TAP_OPTS="${I7_TAP_OPTS:---flick --auto-circles}"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$SUPLOG"; }
 

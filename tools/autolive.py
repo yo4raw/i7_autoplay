@@ -163,8 +163,12 @@ TAP_MODE_DEFAULT = "timing"
 # タイミング検出のパラメータ（--calibrate と --note-* で実機調整可能。docs/specification.md §17.5）。
 ARC_CENTER = (0.49, 0.50)        # ノーツ放射の中心（円ROIを早撃ち方向へ寄せる基準）
 NOTE_ROI_RADIUS = 0.035          # 円ROI半径（ウィンドウ幅相対, ~18px@529w）
-NOTE_ROI_LEAD = 0.05             # ROIを ARC_CENTER 側へ寄せる量＝取得+クリック遅延の早撃ち補正。
-                                 # 実測較正(EASY/SOL TRIGGER): 0.04→0.025 で MISS 12→9・SS昇格・
+NOTE_ROI_LEAD = 0.02             # ROIを ARC_CENTER 側へ寄せる量＝取得+クリック遅延の早撃ち補正。
+                                 # **2026-07-31: 打鍵ループが 3.3FPS しか出ておらず、
+                                 # 検出遅れ(最大300ms)を lead で埋めていたため 0.04〜0.05 が
+                                 # 最適に見えていた。ループを 26FPS に修正して遅延が ~19ms に
+                                 # 減ったので lead も縮める必要がある（要再測定）。**
+                                 # 旧実測較正(EASY/SOL TRIGGER): 0.04→0.025 で MISS 12→9・SS昇格・
                                  # スコア+14k。0.015 は早撃ち不足で PERFECT 低下。ループ高速化
                                  # (pause照合間引き=DARK_RECHECK_SEC)でレイテンシ減→leadを縮小。
 NOTE_WHITE_V = 170               # min(R,G,B) > これ を「白っぽい（ノーツ）」画素とみなす
@@ -225,7 +229,7 @@ TEMPLATES = {
     "resumelive": ("resume_live.png", 0.85),
     # 周回対象曲「Don't Analyze Me」の一覧行（ユーザー指定: 効率が良いので毎回これを選ぶ）。
     # 選択中は緑ハイライト、未選択は暗背景で見た目が変わるため variant を併用する。
-    "songdaz": ("song_dontanalyze.png", 0.80),
+    "songdaz": ("song_dontanalyze.png", 0.72),
     "liveassist": ("live_assist.png", 0.85),   # ライブアシスト選択画面 → 何も選ばず START（消費なし）
     # 旧 download_btn.png は「ライブの説明」チュートリアル等を誤検出(0.88)したため撤去。
     # DL確認は dldialog（本文テンプレ, 0.85）でのみ判定する。

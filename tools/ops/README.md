@@ -12,6 +12,7 @@
 | `reconnect_watcher.py` | ミラーリング切断の「やり直す」ボタンをテンプレ照合で見つけた時だけ押す。再接続成功で exit 0 | 現役 |
 | `unlock_watcher.py` | 「iPhoneのロックを解除してください」プロンプトの解消を待つ | 現役 |
 | `morning_watcher.sh` | ユーザーが iPhone を触った／再起動した合図（ウィンドウ消失・ID 変化・暗転）を検知する。入力は一切送らない | 現役 |
+| `result_log.py` | 周回と並走してリザルトの成績欄（PERFECT/GOOD/BAD/MISS・SCORE）を受動的に蓄積し、`montage` で1枚にまとめる。打鍵チューニングの効果は1ライブでは誤差に埋もれる（実測±5%）ため、分布で比較するための計測基盤 | 現役 |
 | `corpus_collector.py` | 周回と並走して画面を受動採取し `tests/corpus_raw/<state>/` へ保存する。**コーパスは `.gitignore` 済み**なので、clone した環境ではこれで採り直す | 現役 |
 
 ```bash

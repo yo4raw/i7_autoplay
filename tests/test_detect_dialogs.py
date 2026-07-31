@@ -42,5 +42,33 @@ class TestStoryDialog(unittest.TestCase):
         self.assertGreaterEqual(res["story"][0], 0.85)
 
 
+class TestResumeLiveDialog(unittest.TestCase):
+    def test_resume_live_dialog_is_detected(self):
+        """「前回のライブを再開しますか？」を専用状態として判定すること。
+
+        2026-07-31 実機: アプリ再起動後にこのダイアログが出るが未対応で、
+        人手で「はい」を押すまで周回が再開できなかった。シアン系ヘッダを持つため
+        cardx と誤認しやすく、その場合は背景タップで閉じられず停滞する。
+        """
+        state, res = detect_file("resume_live_dialog_671x348.png")
+        self.assertEqual("resumelive", state,
+                         f"resumelive と判定されるべきだが {state} だった")
+        self.assertGreaterEqual(res["resumelive"][0], 0.85)
+
+    def test_yes_button_anchor_lands_on_the_button(self):
+        """アンカーオフセットが「はい」ボタン上に落ちること（実測位置と照合）。
+
+        いいえ を押すと消費済み LIFE が丸損になるため、左右を取り違えないこと。
+        """
+        import autolive
+        _, res = detect_file("resume_live_dialog_671x348.png")
+        cx, cy = res["resumelive"][2]
+        x = cx + autolive.ANCH_RESUME_YES[0]
+        y = cy + autolive.ANCH_RESUME_YES[1]
+        # 実測した「はい」ボタンの矩形（671x348 フレーム）
+        self.assertTrue(345 <= x <= 460, f"x={x} が「はい」ボタンの外")
+        self.assertTrue(255 <= y <= 282, f"y={y} が「はい」ボタンの外")
+
+
 if __name__ == "__main__":
     unittest.main()

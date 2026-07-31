@@ -143,6 +143,7 @@ ANCH_RESUME = (100.0, 176.0)      # pause_resume 見出し → 再開ボタン�
 ANCH_REPLAY_YES = (86.0, 125.0)   # 連続ライブ 見出し → はい
 ANCH_DOWNLOAD = (55.0, 84.0)      # DL本文 → ダウンロード
 ANCH_STORY_NO = (-68.0, 76.0)     # ストーリー本文 → いいえ
+ANCH_RESUME_YES = (64.0, 62.0)    # 「前回のライブを再開しますか？」→ はい（消費済みLIFEを回収）
 ANCH_KINAKO = (128.0, 62.0)       # ライフが足りません → きなこパン「回復」（上段。ステラ下段は触らない）
 ANCH_RANKUP_X = (160.0, -56.0)    # RANK UP! 見出し → ×
 ANCH_LIVEASSIST_START = (203.0, 243.0)  # ライブアシスト見出し → START（アシスト未選択のまま開始＝消費なし）
@@ -212,6 +213,9 @@ TEMPLATES = {
     "rankup": ("rankup.png", 0.78),            # 「RANK UP!」文字（× フォールバック用）
     "dldialog": ("dl_dialog.png", 0.85),       # データDL確認ダイアログ本文「をダウンロードします。」
     "story": ("story_dialog.png", 0.85),       # 「ストーリー開放チケット…遷移しますか？」→ いいえ
+    # アプリ再起動後に出る「ライブスタート前にアプリが終了しました。前回のライブを再開
+    # しますか？」→ **はい**。LIFE は既に消費済みなので、いいえ を選ぶと丸損になる。
+    "resumelive": ("resume_live.png", 0.85),
     "liveassist": ("live_assist.png", 0.85),   # ライブアシスト選択画面 → 何も選ばず START（消費なし）
     # 旧 download_btn.png は「ライブの説明」チュートリアル等を誤検出(0.88)したため撤去。
     # DL確認は dldialog（本文テンプレ, 0.85）でのみ判定する。
@@ -971,6 +975,10 @@ class AutoLive:
         # ストーリー遷移確認（×無し・いいえ/はい）も closex より先に判定して「いいえ」で閉じる。
         if m("story"):
             return "story", res
+        # アプリ再起動後のライブ再開確認。シアン系ヘッダを持つため cardx より先に判定する
+        # （cardx 扱いだと背景タップで閉じようとして必ず停滞する）。
+        if m("resumelive"):
+            return "resumelive", res
         # ライブアシスト選択（formation START 後に出ることがある）。アイテムを選ばず START で
         # 開始すれば消費ゼロ。formation/カード色検出より先に確定する。
         if m("liveassist"):
@@ -1222,6 +1230,12 @@ class AutoLive:
                 self.log("ストーリー遷移確認 → いいえ")
                 self.click_anchor(res["story"][2], ANCH_STORY_NO)
                 time.sleep(0.8)
+            elif state == "resumelive":
+                # 「前回のライブを再開しますか？」→ はい。中断されたライブの LIFE は
+                # 消費済みなので、再開しないと丸損になる。
+                self.log("ライブ再開確認 → はい（消費済みLIFEを回収）")
+                self.click_anchor(res["resumelive"][2], ANCH_RESUME_YES)
+                time.sleep(2.5)
             elif state == "liveassist":
                 # ライブアシスト選択 → **何も選ばず START**（アイテム消費なしでライブ開始）。
                 self.log("ライブアシスト → 未選択のままSTART")

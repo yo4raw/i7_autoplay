@@ -1,5 +1,42 @@
 # 運用
 
+## 現在の推奨構成（2026-07-31 実機で確定）
+
+```bash
+# 無人周回。落ちても supervisor が8秒後に自動再起動する
+nohup tools/ops/supervise_autolive.sh <target_epoch> > /dev/null 2>&1 &
+
+# 成績を並走して蓄積（チューニングの効果判定に使う）
+nohup python -u tools/ops/result_log.py 7200 <tag> > /tmp/i7dbg/reslog.log 2>&1 &
+python tools/ops/result_log.py montage <tag>
+```
+
+supervisor の打鍵オプションは `--flick --auto-circles`（`I7_TAP_OPTS` で差し替え可）。
+`--note-lead` は指定せず `autolive.py` の既定（0.02）に従う。
+
+到達している水準（Don't Analyze Me / EASY+ / ブースト3倍）:
+
+| 指標 | 値 |
+|---|---|
+| SCORE | 33.8万〜34.3万（BEST 545,300） |
+| PERFECT / GOOD / BAD / MISS | 17 / 158〜160 / 2〜4 / 5 |
+| COMBO | 52〜64 |
+| ループ周波数 | 26〜37 FPS（判定3,000〜4,400フレーム/ライブ） |
+| 1周あたり | 約83秒 |
+
+**残課題**: GOOD 158 に対し PERFECT 17。判定は当たっているが精度が GOOD に偏っており、
+lead をさらに詰める余地がある。効果は1ライブでは誤差（±5%）に埋もれるので、
+`result_log.py` で分布を貯めて比較すること。
+
+## チューニングの進め方（順序を守る）
+
+1. **まず打鍵回数とループ周波数を見る**（ライブ終了時のログ `打鍵N回 / 判定Mフレーム`）。
+   30 FPS を大きく下回るなら、パラメータではなくそこを直す
+2. 打鍵回数がノーツ数を下回る → 検出の問題（`--auto-circles` の効き、しきい値）
+3. 打鍵回数は足りているのに MISS/GOOD が多い → タイミングの問題（`--note-lead`）
+4. 変更したら `result_log.py` で**複数ライブの分布**を見て判定する。単発比較は誤差と
+   区別できない（実測で同一設定でも ±5% ばらつく）
+
 ## 17.7 長時間無人運用の運用知見（2026-06-07 自律周回セッションで確定）
 
 - **検出の前提は「ミラーリングが最前面」。** 合成クリックの前提（§概要・CGEvent ルーティング）と

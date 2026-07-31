@@ -36,6 +36,24 @@ macOS の **iPhone ミラーリング** 越しに **アイドリッシュセブ�
 9. **座標系は2つある。** `click_window(xf,yf)` はウィンドウ相対、`click_content(xf,yf)` は
    内容矩形相対。混同すると誤クリックする。
 
+## 精度が出ないときの定石（2026-07-31 の教訓）
+
+**パラメータを触る前に、必ずこの2つを測る。**
+
+1. **打鍵回数**（ライブ終了時に `打鍵N回 / 判定Mフレーム` としてログに出る）
+   - ノーツ数より少ない → **検出**の問題（円座標のズレ・しきい値）
+   - ノーツ数と同等以上なのに MISS が多い → **タイミング**の問題
+2. **ループ周波数**（判定フレーム数 ÷ ライブ長）
+   - **30 FPS 前後が正常。** これを大きく下回るなら、まずそこを直す
+
+実際にあった事故: 打鍵ループが **3.3 FPS** しか出ておらず（PAUSE 照合が 0.25 秒おきに
+147〜246ms 消費していた）、ノーツ到達を最大 300ms 遅れて検出していた。この状態で
+`--note-lead` を 0.025→0.04→0.055 と「調整」していたが、それは**検出遅れを早撃ちで
+埋めていただけ**で、根本原因を見ていなかった。ループを 37 FPS に直したら
+MISS 120→5・SCORE 66k→34万になり、正しい lead は 0.02 だと判明した。
+
+つまり **lead が大きい値でしか合わないときは、ループが遅い可能性を疑うこと。**
+
 ## コマンド
 
 ```bash
@@ -43,10 +61,17 @@ macOS の **iPhone ミラーリング** 越しに **アイドリッシュセブ�
 python3 -m venv .venv && source .venv/bin/activate
 pip install pyobjc-framework-Quartz pyobjc-framework-Cocoa opencv-python mss numpy Pillow
 
-# 自動周回（ゲームをイベントライブ開始済み or 楽曲選択画面にしてから実行）
-python tools/autolive.py --loops 50 --max-seconds 7200 --flick
+# 無人周回の標準手順（推奨。落ちても supervisor が自動再起動する）
+nohup tools/ops/supervise_autolive.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &
+
+# 単発（ゲームをイベントライブ開始済み or 楽曲選択画面にしてから実行）
+python tools/autolive.py --loops 50 --max-seconds 7200 --flick --auto-circles
 python tools/autolive.py --loops 3 --verbose          # 短いデバッグ実行
 python tools/autolive.py --loops 2 --dry-run          # 判定のみ・クリックしない
+
+# リザルト成績の蓄積（周回と並走。チューニング効果は1ライブでは誤差に埋もれる）
+python -u tools/ops/result_log.py 7200 <tag>
+python tools/ops/result_log.py montage <tag>          # 蓄積ぶんを1枚にまとめる
 
 # 手動ドライバ（探索／テンプレ取得用。座標はウィンドウ相対 0..1）
 python tools/driver.py info
@@ -56,6 +81,13 @@ python tools/driver.py click <xfrac> <yfrac>
 # テスト（実機不要・合成フレームとコーパス）
 .venv/bin/python -m unittest discover -s tests
 ```
+
+**`--auto-circles` は必須級。** 円座標は機種差で数十 px ずれ、無効だと MISS が跳ね上がる
+（実測 MISS 51・グレード B）。補正値は `.autocal_circles.json` にキャッシュされ、
+再起動時に即復元される。supervisor は既定で付ける。
+
+**ライブ（曲）の途中で autolive を止めないこと。** その周回ぶんの LIFE が丸ごと無駄になる。
+改善が必要でもリザルト画面が出るまで待つ（`detect()` が `gameplay`/`pause` を返す間は待機）。
 
 事前に一度、**スクリプトを起動するホストプロセス**（Terminal / iTerm / VS Code など。.py ファイル
 ではない）へ、システム設定で **画面収録** と **アクセシビリティ** を付与し、そのホストを

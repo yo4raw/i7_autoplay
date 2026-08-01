@@ -45,10 +45,13 @@ while :; do
   if (( recoveries > MAX_RECOVERIES )); then
     slog "max recoveries exceeded; giving up"; touch /tmp/i7_freeze_unrecovered; exit 1
   fi
-  pkill -f supervise_autolive.sh; pkill -f "autolive.py"; sleep 2
+  # **autolive だけを止める。** supervisor / run_until は殺さない。
+  # 殺すと run_until が supervisor を起動し直し、こちらの nohup と二重起動になる
+  # （実際に autolive が2プロセス同時に走る事故が起きている）。
+  # autolive を落とせば supervisor が復旧後に自動で立ち上げ直してくれる。
+  pkill -f "autolive.py"; sleep 2
   if python -u tools/ops/recover_freeze.py >> "$SLOG" 2>&1; then
-    slog "recovery OK -> relaunch supervisor"
-    nohup tools/ops/supervise_autolive.sh "$TARGET" > /dev/null 2>&1 &
+    slog "recovery OK -> supervisor が autolive を再起動するのを待つ"
     sleep 30   # 周回立ち上がり待ち（直後の attempt 増をトリガ誤検知しないよう同期し直す）
     base_att=$(grep -c "launch attempt" "$SUPLOG" 2>/dev/null || echo 0)
     base_warn=$(grep -c "閉じられず停滞" "$LOG" 2>/dev/null || echo 0)

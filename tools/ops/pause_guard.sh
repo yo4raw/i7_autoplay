@@ -27,9 +27,13 @@ EOF
 )
   if (( n > GUARD_MAX )); then
     log "PAUSE storm detected (n=$n/60s) -> killing farm"
+    # **停止の順序が重要**: 最上位の run_until.sh から止める。先に supervisor を
+    # 殺すと run_until がそれを検知して再起動し、この停止指示を打ち消してしまう。
+    touch "${I7_PAUSE_GUARD_FLAG:-/tmp/i7_pause_guard_fired}"
+    pkill -f run_until.sh
+    sleep 1
     pkill -f supervise_autolive.sh
     pkill -f "autolive.py"
-    touch /tmp/i7_pause_guard_fired
     log "farm killed; guard exiting"
     exit 1
   fi

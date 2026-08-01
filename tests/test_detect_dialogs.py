@@ -115,5 +115,52 @@ class TestExpResultScreen(unittest.TestCase):
         self.assertLess(worst, thr, f"本物のポップアップ等で誤検出 (max={worst:.3f})")
 
 
+class TestDataUpdateDialog(unittest.TestCase):
+    """「データ更新のためタイトルへ戻ります」を cardx と誤認しないこと。
+
+    2026-08-02 実機: 100周目で出現。シアン系ヘッダを持つため cardx と誤認され、
+    背景タップでは閉じられず 25 秒後に安全停止した（12時間周回が3時間41分で停止）。
+    """
+
+    def test_detected_as_dataupdate(self):
+        state, res = detect_file("data_update_dialog_671x348.png")
+        self.assertEqual("dataupdate", state, f"{state} と誤判定")
+        self.assertGreaterEqual(res["dataupdate"][0], 0.85)
+
+    def test_anchor_lands_on_yes(self):
+        import autolive
+        _, res = detect_file("data_update_dialog_671x348.png")
+        cx, cy = res["dataupdate"][2]
+        x = cx + autolive.ANCH_DATAUPDATE_YES[0]
+        y = cy + autolive.ANCH_DATAUPDATE_YES[1]
+        # 実測した「はい」ボタンの矩形（671x348）
+        self.assertTrue(275 <= x <= 395, f"x={x} が「はい」の外")
+        self.assertTrue(255 <= y <= 280, f"y={y} が「はい」の外")
+
+
+class TestResendResultDialog(unittest.TestCase):
+    """「前回のライブ結果の送信が正しく終了しませんでした」で **再送する** を選ぶこと。
+
+    「諦める」を選ぶと直前のライブぶんのイベント pt が失われる。左右を取り違えると
+    周回した成果が消えるので、着弾点を実測矩形で固定する。
+    """
+
+    def test_detected_as_resendresult(self):
+        state, res = detect_file("resend_result_dialog_671x348.png")
+        self.assertEqual("resendresult", state, f"{state} と誤判定")
+        self.assertGreaterEqual(res["resendresult"][0], 0.85)
+
+    def test_anchor_lands_on_resend_not_giveup(self):
+        import autolive
+        _, res = detect_file("resend_result_dialog_671x348.png")
+        cx, cy = res["resendresult"][2]
+        x = cx + autolive.ANCH_RESEND_YES[0]
+        y = cy + autolive.ANCH_RESEND_YES[1]
+        # 実測: 「諦める」は x≈222..330、「再送する」は x≈345..465
+        self.assertTrue(345 <= x <= 465,
+                        f"x={x} が「再送する」の外。「諦める」側なら pt を失う")
+        self.assertTrue(255 <= y <= 280, f"y={y} がボタンの外")
+
+
 if __name__ == "__main__":
     unittest.main()

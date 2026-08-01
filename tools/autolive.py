@@ -145,6 +145,8 @@ ANCH_REPLAY_YES = (86.0, 125.0)   # 連続ライブ 見出し → はい
 ANCH_DOWNLOAD = (55.0, 84.0)      # DL本文 → ダウンロード
 ANCH_STORY_NO = (-68.0, 76.0)     # ストーリー本文 → いいえ
 ANCH_RESUME_YES = (64.0, 62.0)    # 「前回のライブを再開しますか？」→ はい（消費済みLIFEを回収）
+ANCH_DATAUPDATE_YES = (-1.0, 79.0)  # 「データ更新のためタイトルへ戻ります」→ はい
+ANCH_RESEND_YES = (68.0, 82.0)      # 「前回のライブ結果の送信が…」→ **再送する**（諦めるとpt消失）
 # 【重要・課金事故対策】きなこパンの「回復」は**きなこパン行のラベルを基準に**押す。
 # 見出し（ライフが足りません）基準の旧オフセット ANCH_KINAKO=(128,62) は、きなこパンが
 # 0個になると破綻する: ダイアログはきなこパン行をグレーアウトせず**行ごと消して上に詰める**
@@ -250,6 +252,12 @@ TEMPLATES = {
     # 周回対象曲「Don't Analyze Me」の一覧行（ユーザー指定: 効率が良いので毎回これを選ぶ）。
     # 選択中は緑ハイライト、未選択は暗背景で見た目が変わるため variant を併用する。
     "songdaz": ("song_dontanalyze.png", 0.85),
+    # ゲーム側のデータ更新でタイトルへ戻される。シアン系ヘッダを持つため cardx と
+    # 誤認され、背景タップでは閉じられず停滞→安全停止していた（実測 2026-08-02、100周目）。
+    "dataupdate": ("data_update.png", 0.85),
+    # タイトル復帰後に出る「前回のライブ結果の送信が正しく終了しませんでした」。
+    # **再送する**を選ばないと直前のライブぶんの pt が失われる。
+    "resendresult": ("resend_result.png", 0.85),
     "liveassist": ("live_assist.png", 0.85),   # ライブアシスト選択画面 → 何も選ばず START（消費なし）
     # 旧 download_btn.png は「ライブの説明」チュートリアル等を誤検出(0.88)したため撤去。
     # DL確認は dldialog（本文テンプレ, 0.85）でのみ判定する。
@@ -1160,6 +1168,11 @@ class AutoLive:
         # （cardx 扱いだと背景タップで閉じようとして必ず停滞する）。
         if m("resumelive"):
             return "resumelive", res
+        # データ更新のタイトル復帰と、その後の結果再送確認。いずれもシアン系ヘッダを持つ。
+        if m("dataupdate"):
+            return "dataupdate", res
+        if m("resendresult"):
+            return "resendresult", res
         # ライブアシスト選択（formation START 後に出ることがある）。アイテムを選ばず START で
         # 開始すれば消費ゼロ。formation/カード色検出より先に確定する。
         if m("liveassist"):
@@ -1485,6 +1498,18 @@ class AutoLive:
                 self.log("ライブ再開確認 → はい（消費済みLIFEを回収）")
                 self.click_anchor(res["resumelive"][2], ANCH_RESUME_YES)
                 time.sleep(2.5)
+            elif state == "dataupdate":
+                # 「データ更新のためタイトルへ戻ります」→ はい。押さないと先に進めない。
+                # この後タイトル→ホーム→（結果再送確認）と進む。
+                self.log("データ更新 → はい（タイトルへ戻る）")
+                self.click_anchor(res["dataupdate"][2], ANCH_DATAUPDATE_YES)
+                time.sleep(6.0)
+            elif state == "resendresult":
+                # 「前回のライブ結果の送信が正しく終了しませんでした」→ **再送する**。
+                # 「諦める」を選ぶと直前のライブぶんのイベント pt が失われる。
+                self.log("ライブ結果の送信失敗 → 再送する（pt を失わない）")
+                self.click_anchor(res["resendresult"][2], ANCH_RESEND_YES)
+                time.sleep(6.0)
             elif state == "liveassist":
                 # ライブアシスト選択 → **何も選ばず START**（アイテム消費なしでライブ開始）。
                 self.log("ライブアシスト → 未選択のままSTART")

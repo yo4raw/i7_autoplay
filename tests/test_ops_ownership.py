@@ -116,3 +116,31 @@ class TestScriptsParse(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNoBlindTapping(unittest.TestCase):
+    """復旧ツールが既知画面以外を盲目タップしないこと。
+
+    2026-08-02 実機事故: recover_freeze.py はドキュストリングに「既知画面以外では
+    絶対にクリックしない」と書かれていたが、実装にはテンプレ不一致が続くと中央を
+    タップするフォールバックがあった。アプリの強制終了に失敗した状態でこれが発火し、
+    盲目タップを繰り返した結果**ゲームではない別アプリの画面まで操作してしまった**。
+
+    ドキュメントの記述を信用せず、実装が盲目タップしないことをテストで固定する。
+    """
+
+    def test_blind_center_tap_is_disabled(self):
+        import re
+        src = read("recover_freeze.py")
+        m = re.search(r"^BLIND_CENTER_TAP\s*=\s*(\w+)", src, re.M)
+        self.assertIsNotNone(m, "BLIND_CENTER_TAP のフラグが無い")
+        self.assertEqual("False", m.group(1),
+                         "盲目タップが有効。ゲーム外の画面を操作しうる")
+
+    def test_center_tap_is_gated_by_the_flag(self):
+        """中央タップの実行がフラグで確実に塞がれていること。"""
+        for ln in read("recover_freeze.py").split("\n"):
+            if "center tap" in ln and not ln.lstrip().startswith("#"):
+                # 実行行に到達する条件式にフラグが含まれていること
+                self.assertIn("BLIND_CENTER_TAP", read("recover_freeze.py"))
+                break

@@ -4,6 +4,10 @@
 テンプレ照合ナビで楽曲選択まで進める。既知画面以外では絶対にクリックしない（安全第一）。
 
 使い方: python -u tools/ops/recover_freeze.py   （成功で exit 0 / 失敗 exit 1）
+
+**注意**: 既知テンプレに一致しないときの中央タップは 2026-08-02 に無効化した
+（BLIND_CENTER_TAP=False）。実機で別アプリの画面まで盲目タップしてしまったため。
+有効化するとゲーム外の画面を操作しうるので、原則そのままにすること。
 前提: supervisor / autolive は停止済みであること（呼び出し側で pkill）。
 """
 import os
@@ -17,6 +21,8 @@ from autolive import match_multiscale  # noqa: E402
 
 import cv2  # noqa: E402
 
+# 既知画面に一致しないときの中央タップ。**既定で無効**（上のドキュストリング参照）。
+BLIND_CENTER_TAP = False
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCREENS = os.path.join(ROOT, "assets", "screens")
 TEMPLATES = os.path.join(ROOT, "assets", "templates")
@@ -131,11 +137,13 @@ def main():
                 acted = True
                 break
         if not acted:
-            # 既知テンプレ不一致が2回続いたら中央タップ（タイトルの表示バリエーション対策）。
-            # 復旧シーケンス中に gameplay/課金画面はあり得ず、タイトル/ロード/ホームの
-            # 中央タップはいずれも無害（ホームはキャラ会話が出る程度でタップで消える）。
+            # 【2026-08-02 無効化】既知テンプレ不一致で中央タップするフォールバックは
+            # **危険**。実機でアプリ強制終了に失敗した状態から発火し、盲目タップを
+            # 繰り返した結果**ゲームではない別アプリの画面まで操作してしまった**。
+            # 「既知画面以外では絶対にクリックしない」という本ツールの前提と矛盾する。
+            # 一致しないまま時間切れになったら、黙って諦めて人間に任せる。
             bright_streak += 1
-            if bright_streak >= 2 and time.time() - t0 > 15:
+            if BLIND_CENTER_TAP and bright_streak >= 2 and time.time() - t0 > 15:
                 bright = float(frames[-1].mean())
                 print(f"[recover] no match (bright={bright:.0f}) -> center tap", flush=True)
                 click_frac(0.5, 0.55)

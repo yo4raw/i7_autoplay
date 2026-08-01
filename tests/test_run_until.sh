@@ -25,6 +25,12 @@ EOS
 chmod +x "$TMP/.venv/bin/python"
 
 # 本番と資源を共有しないよう、ログとフラグは全てテンポラリへ隔離する
+# 実行開始時点で既にあった本番フラグを記録しておく（テストが作ったものと区別するため）
+PRE_EXISTING=()
+for f in /tmp/i7_safe_stop_fired /tmp/i7_barren_fired; do
+  [[ -e $f ]] && PRE_EXISTING+=($f)
+done
+
 export I7_RUNNER_LOG="$TMP/runner.log"
 export I7_SAFE_FLAG="$TMP/safe_fired"
 export I7_BARREN_FLAG="$TMP/barren_fired"
@@ -66,8 +72,12 @@ run_case "切断中は待機する" 1 "" "ミラーリング切断中"
 # 4) 接続あり＋フラグ無し → 目標時刻まで回り続けて正常終了
 run_case "正常時は目標時刻まで回る" 0 "" "target reached"
 
-# 本番の資源に触れていないことを確認する（テストが周回を壊さないための歯止め）
+# 本番の資源に触れていないことを確認する（テストが周回を壊さないための歯止め）。
+# **既に存在していたものは対象外**。本番の安全停止が残したフラグを「テストが作った」と
+# 誤検知していた（実際に 2026-08-02 04:56 の停止フラグで誤検出した）。
 for f in /tmp/i7_safe_stop_fired /tmp/i7_barren_fired; do
-  [[ -e $f ]] && { ng "本番のフラグ $f を作ってしまった"; }
+  if [[ -e $f && -z ${PRE_EXISTING[(r)$f]} ]]; then
+    ng "本番のフラグ $f を作ってしまった"
+  fi
 done
 exit $fail

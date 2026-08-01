@@ -21,6 +21,8 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$SUPLOG"; }
 
 log "supervisor start (target=$(date -r "$TARGET" '+%Y-%m-%d %H:%M:%S')) opts=[$TAP_OPTS]"
 attempt=0
+last_clears=$(grep -c "ライブ クリア" "$LOG" 2>/dev/null | head -1)
+barren=0
 while :; do
   now=$(date +%s)
   remain=$(( TARGET - now ))
@@ -34,14 +36,37 @@ while :; do
   python -u tools/autolive.py --loops 99999 --max-seconds "$remain" --no-esc ${=TAP_OPTS} >> "$LOG" 2>&1
   rc=$?
   log "autolive exited rc=$rc (attempt #$attempt)"
+  # rc=42 は autolive の**安全停止**（未知画面・きなこパン枯渇・切断など）。
+  # 人間の確認が必要で、再起動しても同じ画面で止まるだけなので supervisor ごと終了する。
+  # 従来は rc を見ずに8秒後へ再起動し、26〜36秒周期の空転を延々と繰り返していた
+  # （実測 2026-08-01: 12連続、ログ全体で「完了: 0 回クリア」71件）。
+  if (( rc == 42 )); then
+    log "safety stop (rc=42); NOT restarting. 直近のスクショ: /tmp/i7dbg/"
+    touch /tmp/i7_safe_stop_fired
+    break
+  fi
   # 正常な時間切れ終了か判定: 残り時間がほぼ無ければ終了
   now=$(date +%s)
   if (( TARGET - now <= 5 )); then
     log "no time remaining after exit; stopping"
     break
   fi
-  # クラッシュ後はゲームが固まっている可能性。少し待って再起動（PAUSEは autolive 側が再開）
-  log "restarting in 8s..."
-  sleep 8
+  # 進捗（クリア）が増えないまま終了が続くなら、再起動しても無駄なので諦める。
+  clears=$(grep -c "ライブ クリア" "$LOG" 2>/dev/null | head -1)
+  if (( clears > last_clears )); then
+    last_clears=$clears; barren=0
+  else
+    barren=$(( barren + 1 ))
+    if (( barren >= 4 )); then
+      log "4回連続でクリアが増えないまま終了 → 空転とみなし停止する"
+      touch /tmp/i7_barren_fired
+      break
+    fi
+  fi
+  # クラッシュ後はゲームが固まっている可能性。待ってから再起動（PAUSEは autolive 側が再開）。
+  # 空転が続くほど待ちを伸ばす（8→16→32→64…上限300秒）。
+  wait=$(( 8 * (1 << barren) )); (( wait > 300 )) && wait=300
+  log "restarting in ${wait}s... (barren=$barren)"
+  sleep "$wait"
 done
 log "supervisor done"

@@ -201,6 +201,12 @@ KEEPALIVE_GAP_SEC = 0.6          # 無検出がこの秒続いたら genuine 入
 # **既定オフ**（既知の良好構成＝全レーン固定半径に戻す）。効果を分布で確認できたら既定へ。
 ROI_SCALE_BY_DISTANCE = False
 CARDX_SUPPRESS_SEC = 3.5
+# 終了コード。**supervisor が「再起動してよいか」を判断するために使う**。
+# 従来は安全停止も break で正常復帰し rc=0 だったため、supervisor が停止理由に関係なく
+# 8秒後に再起動し、同じ画面で26〜36秒周期の空転を延々と繰り返していた
+# （実測 2026-08-01: attempt #34〜#45 の12連続、ログ全体で「完了: 0 回クリア」71件）。
+EXIT_OK = 0          # 正常終了（loops到達 / max-seconds到達 / ESC）
+EXIT_SAFE_STOP = 42  # 安全停止。**人間の確認が必要なので再起動してはいけない**
 AUTOCAL_RETRY_SEC = 0.5          # --auto-circles: 補正に成功するまでライブ中この間隔で再試行
 AUTOCAL_MAX_SAMPLES = 200        # 多数決に使う検出サンプルの保持上限（古いものから捨てる）
 # 補正結果の永続化先。**プロセス再起動をまたいで即座に正しい円で打鍵する**ため。
@@ -463,6 +469,7 @@ class AutoLive:
         self.circles_calibrated = False   # プロセス内で一度だけ実施
         self.autocal_next_try = 0.0       # 次に再試行してよい時刻（成功するまで繰り返す）
         self.autocal_samples = []         # 多数決用に貯める検出サンプル（content相対）
+        self.stop_reason = None           # 安全停止の理由（None=正常終了）。終了コードに反映する
         self.suppress_cardx_until = 0.0   # この時刻までは cardx を無視（フレンド選択直後）
         self.tap_count = 0                # 1ライブ中の打鍵回数（検出不足か位置ズレかの切り分け用）
         self.frame_count = 0              # 1ライブ中の判定フレーム数（実効ループ周波数の把握）
@@ -1141,7 +1148,9 @@ class AutoLive:
             if caf is not None:
                 caf.terminate()
         self.log(f"完了: {self.loops_done} 回クリア / "
-                 f"{time.time() - self.t_start:.0f}s")
+                 f"{time.time() - self.t_start:.0f}s"
+                 + (f" / 安全停止: {self.stop_reason}" if self.stop_reason else ""))
+        return self.stop_reason
 
     def _loop(self):
         while self.loops_done < self.max_loops:
@@ -1194,6 +1203,7 @@ class AutoLive:
                     _I.fromarray(frame).save(fn)
                     self.log(f"[warn] LIFE不足が継続（きなこパン枯渇の可能性）→ {fn} 保存。"
                              f"ステラは使わず停止します。")
+                    self.stop_reason = "life_short_persist"
                     break
                 # **押す前に「きなこパン行が実在すること」を画像で確認する。**
                 # 枯渇時は行が消えて詰まり、旧実装は同じオフセットでステラの「回復」を
@@ -1206,6 +1216,7 @@ class AutoLive:
                     _I.fromarray(frame).save(fn)
                     self.log(f"[warn] きなこパン行が見つからない（score={kscore:.2f}）→ "
                              f"{fn} 保存。**ステラ誤消費を避けるためクリックせず停止**します。")
+                    self.stop_reason = "kinako_missing"
                     break
                 self.log(f"LIFE不足 → きなこパンで回復（{self.life_recovers}回目, "
                          f"ステラ不使用・行確認 score={kscore:.2f}）")
@@ -1239,6 +1250,7 @@ class AutoLive:
                     _I.fromarray(frame).save(fn)
                     self.log(f"[warn] gameplay が {now - self.gameplay_since:.0f}s 継続（異常/"
                              f"ミラーリング切断の可能性）→ {fn} 保存して停止")
+                    self.stop_reason = "gameplay_timeout"
                     break
                 if self.engine == "track":
                     # 実験: スポーン検出→追跡→レーン/ETAで打鍵（note_engine）。
@@ -1286,6 +1298,7 @@ class AutoLive:
                                       f"cardx_stuck_{int(now - self.t_start)}.png")
                     _I.fromarray(frame).save(fn)
                     self.log(f"[warn] カードポップアップを閉じられず停滞 → {fn} 保存して停止")
+                    self.stop_reason = "cardx_stuck"
                     break
                 self.log("カードポップアップ → 背景タップで閉じる")
                 self.click_window(*P_CARD_DISMISS)
@@ -1302,6 +1315,7 @@ class AutoLive:
                                       f"closex_stuck_{int(now - self.t_start)}.png")
                     _I.fromarray(frame).save(fn)
                     self.log(f"[warn] ポップアップを閉じられず停滞 → {fn} 保存して停止")
+                    self.stop_reason = "popup_stuck"
                     break
                 # ×位置はポップアップ種別で異なる。中央アンカーの既知候補を巡回クリックして
                 # 確実に閉じる（カードは中央配置・同pxサイズ＝端末非依存）。
@@ -1322,6 +1336,7 @@ class AutoLive:
                                       f"rankup_stuck_{int(now - self.t_start)}.png")
                     _I.fromarray(frame).save(fn)
                     self.log(f"[warn] RANK UP を閉じられず停滞 → {fn} 保存して停止")
+                    self.stop_reason = "rankup_stuck"
                     break
                 self.log("RANK UP → ×")
                 self.click_anchor(res["rankup"][2], ANCH_RANKUP_X)
@@ -1409,6 +1424,7 @@ class AutoLive:
                     _I.fromarray(frame).save(fn)
                     self.log(f"[warn] Result送りが {now - self.result_since:.0f}s 進まず停滞 → "
                              f"{fn} 保存して停止（システムダイアログ等のオーバーレイの可能性）。")
+                    self.stop_reason = "result_stuck"
                     break
                 self.click_center_off(OFF_RESULT_ADV)  # 画面中央タップで送る
                 time.sleep(0.35)  # リザルト送りの中央タップ間隔
@@ -1425,6 +1441,7 @@ class AutoLive:
                     _I.fromarray(frame).save(fn)
                     self.log(f"[warn] 未知画面に {now - self.menu_since:.0f}s 停滞 → "
                              f"{fn} 保存して安全停止（テンプレ未対応の可能性）。")
+                    self.stop_reason = "unknown_screen"
                     break
                 time.sleep(0.3)
             # 進捗のある状態に遷移したら停滞タイマーをリセット。menu/rankup/closex は
@@ -1510,12 +1527,15 @@ def main():
     if args.calibrate:
         calibrate()
         return
-    AutoLive(args.loops, dry_run=args.dry_run, verbose=args.verbose,
-             max_seconds=args.max_seconds, tap_mode=args.tap_mode,
-             note_trigger=args.note_trigger, note_lead=args.note_lead,
-             note_roi=args.note_roi, holds=args.holds, engine=args.engine,
-             esc_enabled=not args.no_esc, flick=args.flick, predict=args.predict,
-             auto_circles=args.auto_circles).run()
+    reason = AutoLive(args.loops, dry_run=args.dry_run, verbose=args.verbose,
+                      max_seconds=args.max_seconds, tap_mode=args.tap_mode,
+                      note_trigger=args.note_trigger, note_lead=args.note_lead,
+                      note_roi=args.note_roi, holds=args.holds, engine=args.engine,
+                      esc_enabled=not args.no_esc, flick=args.flick,
+                      predict=args.predict, auto_circles=args.auto_circles).run()
+    # 安全停止は **人間の確認が必要** なので、supervisor に再起動させないよう
+    # 専用の終了コードで抜ける（正常終了と区別できないと空転ループになる）。
+    sys.exit(EXIT_SAFE_STOP if reason else EXIT_OK)
 
 
 if __name__ == "__main__":

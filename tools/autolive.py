@@ -231,6 +231,11 @@ TEMPLATES = {
     # きなこパン行の存在確認用。**これが無ければ LIFE 回復をクリックしない**（ステラ誤消費防止）。
     # 実測: きなこパン有り 1.000 / 枯渇 0.52 と明確に分離する。
     "kinakorow": ("kinako_row.png", 0.80),
+    # per-song Result の EXP 画面（獲得キャラEXP）。カードの緑ヘッダを detect_card_x が
+    # 拾って cardx と誤判定し、背景タップでは閉じないため停滞→安全停止していた
+    # （実測: 全警告87件中34件が「カードポップアップを閉じられず停滞」）。
+    # 中央タップで送る画面なので、cardx より先に専用状態として確定する。
+    "expresult": ("exp_result.png", 0.90),
     "friendreq": ("friendreq_yes.png", 0.74),  # EVENT RESULT の「申請する」ボタン
     "replay": ("replay_title.png", 0.82),      # 連続ライブ再プレイ確認の「連続ライブ」見出し
     "closex": ("close_x.png", 0.87),           # カード型ポップアップ右上の×（緑, 本物≈0.94）
@@ -1111,6 +1116,10 @@ class AutoLive:
         # （端末非依存）。専用ダイアログ判定の後・result の前（Result の上に重なって出るため）。
         # getattr: detect() は result_log 等の外部ツールからも __new__ 生成の
         # インスタンスで呼ばれるため、属性が無くても動くようにする。
+        # per-song Result の EXP 画面はカードの緑ヘッダを持つため cardx と誤検出される。
+        # 背景タップでは閉じず停滞→安全停止するので、色検出より先に確定させる。
+        if m("expresult"):
+            return "expresult", res
         cardx = None if time.time() < getattr(self, "suppress_cardx_until", 0.0) \
             else detect_card_x(frame_rgb)
         if cardx is not None:
@@ -1402,7 +1411,7 @@ class AutoLive:
                 self.log("ライブアシスト → 未選択のままSTART")
                 self.click_anchor(res["liveassist"][2], ANCH_LIVEASSIST_START)
                 time.sleep(1.2)
-            elif state in ("result", "eventresult"):
+            elif state in ("result", "eventresult", "expresult"):
                 # per-song Result / EVENT RESULT。クリア計上し、中央タップで送る。
                 now = time.time()
                 if self.was_in_live:

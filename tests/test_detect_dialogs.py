@@ -70,5 +70,50 @@ class TestResumeLiveDialog(unittest.TestCase):
         self.assertTrue(255 <= y <= 282, f"y={y} が「はい」ボタンの外")
 
 
+class TestExpResultScreen(unittest.TestCase):
+    """per-song Result の EXP 画面が cardx と誤判定されないこと。
+
+    2026-08-01 実機: この画面はカードの緑ヘッダを持つため detect_card_x が拾い、
+    cardx として背景タップで閉じようとして失敗し続け、25秒後に安全停止していた。
+    ログ全体の警告87件中34件（最多）がこの「カードポップアップを閉じられず停滞」。
+    supervisor が再起動しても同じ画面で止まるため空転トラップになっていた。
+    中央タップで送る画面なので result 系として扱う。
+    """
+
+    def test_671x348_is_expresult(self):
+        state, res = detect_file("exp_result_671x348.png")
+        self.assertEqual("expresult", state, f"{state} と誤判定")
+        self.assertGreaterEqual(res["expresult"][0], 0.90)
+
+    def test_529x334_is_expresult(self):
+        """機種差（SE）でも検出できること（variant テンプレの担保）。"""
+        state, res = detect_file("exp_result_529x334.png")
+        self.assertEqual("expresult", state, f"{state} と誤判定")
+        self.assertGreaterEqual(res["expresult"][0], 0.90)
+
+    def test_genuine_popups_are_not_expresult(self):
+        """本物のカードポップアップ／ライブ画面を expresult と誤検出しないこと。
+
+        誤検出すると閉じるべきポップアップを中央タップで送ろうとして進まなくなる。
+        """
+        import glob
+        import cv2
+        import autolive as AL
+        imgs, thr = AL.load_templates()["expresult"]
+        worst = 0.0
+        pats = ["closex/*.png", "gameplay/*.png"]
+        files = []
+        for pat in pats:
+            files += sorted(glob.glob(os.path.join(
+                os.path.dirname(__file__), "corpus_raw", pat)))[:25]
+        if not files:
+            self.skipTest("実フレームコーパスなし（任意）")
+        for p in files:
+            f = cv2.cvtColor(np.array(Image.open(p).convert("RGB")),
+                             cv2.COLOR_RGB2BGR)
+            worst = max(worst, AL.match_best(f, imgs)[0])
+        self.assertLess(worst, thr, f"本物のポップアップ等で誤検出 (max={worst:.3f})")
+
+
 if __name__ == "__main__":
     unittest.main()

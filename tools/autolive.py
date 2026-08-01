@@ -475,6 +475,7 @@ class AutoLive:
         self.autocal_next_try = 0.0       # 次に再試行してよい時刻（成功するまで繰り返す）
         self.autocal_samples = []         # 多数決用に貯める検出サンプル（content相対）
         self.stop_reason = None           # 安全停止の理由（None=正常終了）。終了コードに反映する
+        self._last_win_check = 0.0        # ウィンドウ矩形を最後に取り直した時刻
         self.suppress_cardx_until = 0.0   # この時刻までは cardx を無視（フレンド選択直後）
         self.tap_count = 0                # 1ライブ中の打鍵回数（検出不足か位置ズレかの切り分け用）
         self.frame_count = 0              # 1ライブ中の判定フレーム数（実効ループ周波数の把握）
@@ -1011,6 +1012,35 @@ class AutoLive:
         except Exception:
             return False
 
+    def _refresh_window(self, interval=2.0):
+        """ミラーリングウィンドウの矩形を定期的に取り直す。
+
+        起動時に1回しか取らないと、ウィンドウが移動・リサイズされた後も古い矩形で
+        キャプチャし続け、**画面の一部＋デスクトップ壁紙**という不整合なフレームを
+        掴んで「未知画面」で安全停止する（実測 2026-08-01: ミラーリングアプリの
+        再起動でウィンドウが 671x348 → 318x701 に変わり、空転を繰り返した）。
+
+        寸法が変わったら content 矩形と円キャリブレーションのキャッシュも作り直す
+        （どちらもウィンドウ寸法に依存するため）。
+        """
+        now = time.time()
+        if now - self._last_win_check < interval:
+            return
+        self._last_win_check = now
+        try:
+            win = driver.find_window()
+        except Exception:
+            return                      # 切断中など。次回に再試行
+        if (int(win["w"]), int(win["h"])) != (int(self.win["w"]), int(self.win["h"])):
+            self.log(f"[warn] ウィンドウ寸法が変化: "
+                     f"{int(self.win['w'])}x{int(self.win['h'])} → "
+                     f"{int(win['w'])}x{int(win['h'])} → 座標系を作り直す")
+            self.content = (38, int(win["h"]) - 9)
+            self._roi_scale_key = None          # ROI スケールを再計算させる
+            self.circles_calibrated = False     # 別レイアウトなので円を取り直す
+            self.autocal_samples = []
+        self.win = win
+
     def _keep_front(self, interval=0.4):
         # **最前面なら再アクティブ化しない**。ミラーリングの再アクティブ化(activate)は
         # ライブ中にゲームを PAUSE させるため（端末により顕著）、最前面を失った時だけ復帰させる。
@@ -1178,6 +1208,7 @@ class AutoLive:
                 self.log("時間上限に到達 → 終了")
                 break
             self._keep_front()
+            self._refresh_window()
             frame = driver.grab(self.win)
             rect = detect_content_rect(frame)
             # 暗いゲーム画面でのみ正しく取れる。取れたらキャッシュし、明るい画面でも一貫使用。

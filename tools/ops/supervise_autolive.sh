@@ -15,7 +15,7 @@ SUPLOG="/tmp/i7_supervisor.log"
 #   （--note-lead は指定しない: 打鍵ループ高速化で最適値が変わったため autolive の既定に従う）
 #   --flick        : 赤ノーツのフリック（既存）
 # 上書きしたいときは I7_TAP_OPTS 環境変数で丸ごと差し替える。
-TAP_OPTS="${I7_TAP_OPTS:---flick --auto-circles}"
+TAP_OPTS="${I7_TAP_OPTS:---flick --auto-circles --note-lead 0.02}"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$SUPLOG"; }
 

@@ -15,6 +15,7 @@ macOS の iPhone ミラーリング越しに IDOLiSH7 の累計イベントラ�
 | [`operations.md`](operations.md) | 無人運用・停止条件・復旧・トラブルシューティング | 実機確認済み |
 | [`screen-transitions.md`](screen-transitions.md) | 画面遷移の観察記録 | 観察記録 |
 | [`note-engine-dev.md`](note-engine-dev.md) | ノーツエンジンの開発メモ | 開発メモ |
+| [`improvements.md`](improvements.md) | 全体レビューで洗い出した改善点と、**実機を動かす際の確認項目**。**Critical 1件（ステラ誤消費）は既遂** | 検証済み。着手前に必読 |
 | [`archive/original-design.md`](archive/original-design.md) | 実装前に書いた当初設計。**未実装**（OCR・設定ファイル・CLI 仕様など） | 履歴。実態ではない |
 | [`superpowers/`](superpowers/) | 設計書（specs）と実装計画（plans） | 時点の記録 |
 

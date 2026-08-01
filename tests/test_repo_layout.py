@@ -17,7 +17,8 @@ TOOLS = os.path.join(ROOT, "tools")
 PROD = ["autolive.py", "driver.py", "note_engine.py"]
 OPS = ["supervise_autolive.sh", "freeze_sentinel.sh", "morning_watcher.sh",
        "pause_guard.sh", "reconnect_watcher.py", "recover_freeze.py",
-       "unlock_watcher.py", "corpus_collector.py", "result_log.py"]
+       "unlock_watcher.py", "corpus_collector.py", "result_log.py",
+       "run_until.sh"]
 PROBES = ["trigger_test.py", "idlekeeper.py", "capture_click.py", "color_probe.py",
           "color_probe2.py", "focus_probe.py", "focus_state_monitor.py",
           "hidmove_test.py", "pause_ab.sh", "pause_monitor.py",

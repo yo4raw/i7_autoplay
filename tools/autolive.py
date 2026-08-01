@@ -50,6 +50,7 @@ LIFE 回復（ユーザー要件）:
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -1207,11 +1208,27 @@ class AutoLive:
                 caf = subprocess.Popen(["caffeinate", "-dimsu"])
             except Exception as e:  # caffeinate が無くても続行
                 self.log(f"[warn] caffeinate 起動失敗: {e}")
+
+        # **SIGTERM でも caffeinate を確実に落とす。** supervisor は autolive を
+        # `pkill -f tools/autolive.py`（SIGTERM）で入れ替えるが、既定のハンドラは
+        # finally を通さずプロセスを終了させるため caffeinate が孤児として残り続ける。
+        # 実測 2026-08-01: 一晩の周回で 5 個溜まり、周回を止めた後も Mac がスリープ
+        # しない状態になっていた。
+        def _cleanup(signum=None, _frame=None):
+            if caf is not None and caf.poll() is None:
+                caf.terminate()
+            if signum is not None:
+                sys.exit(EXIT_OK)
+
+        for _sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                signal.signal(_sig, _cleanup)
+            except (ValueError, OSError):
+                pass          # メインスレッド以外では設定できない。致命ではない
         try:
             self._loop()
         finally:
-            if caf is not None:
-                caf.terminate()
+            _cleanup()
         self.log(f"完了: {self.loops_done} 回クリア / "
                  f"{time.time() - self.t_start:.0f}s"
                  + (f" / 安全停止: {self.stop_reason}" if self.stop_reason else ""))

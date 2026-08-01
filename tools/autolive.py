@@ -476,6 +476,8 @@ class AutoLive:
         self.autocal_samples = []         # 多数決用に貯める検出サンプル（content相対）
         self.stop_reason = None           # 安全停止の理由（None=正常終了）。終了コードに反映する
         self._last_win_check = 0.0        # ウィンドウ矩形を最後に取り直した時刻
+        # ライブ1回ぶんのループ内訳（打鍵の時間分解能を上げる余地を探すため）
+        self._prof = {"grab": 0.0, "detect": 0.0, "act": 0.0}
         self.suppress_cardx_until = 0.0   # この時刻までは cardx を無視（フレンド選択直後）
         self.tap_count = 0                # 1ライブ中の打鍵回数（検出不足か位置ズレかの切り分け用）
         self.frame_count = 0              # 1ライブ中の判定フレーム数（実効ループ周波数の把握）
@@ -957,7 +959,9 @@ class AutoLive:
         if not tapped:
             self._keepalive(now)
         self.frame_count += 1
-        time.sleep(0.005)
+        # ここに固定 sleep を置いていたが、毎フレーム 5ms ＝ 判定周期(26ms)の約2割を
+        # 捨てていた。フレーム取得(mss, 約17ms)自体がブロックするので CPU は空転しない。
+        # 打鍵の時間分解能を上げるため撤廃する（実測 38→約50 FPS）。
 
     def _gameplay_track(self, frame, now):
         """実験エンジン: note_engine でノーツをスポーン検出→追跡→レーン/到達判定し打鍵。
@@ -1041,6 +1045,16 @@ class AutoLive:
             self.autocal_samples = []
         self.win = win
 
+    def bgr(self, frame_rgb):
+        """テンプレ照合用の BGR フレーム。detect() が変換済みならそれを使い回す。
+
+        detect() は**照合するときだけ**変換する（ライブ中の分解能を削らないため）ので、
+        ハンドラから self._frame_bgr を直接見ると None のことがある。必ずこれを通すこと。
+        """
+        if getattr(self, "_frame_bgr", None) is None:
+            self._frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+        return self._frame_bgr
+
     def _keep_front(self, interval=0.4):
         # **最前面なら再アクティブ化しない**。ミラーリングの再アクティブ化(activate)は
         # ライブ中にゲームを PAUSE させるため（端末により顕著）、最前面を失った時だけ復帰させる。
@@ -1073,17 +1087,24 @@ class AutoLive:
         - download:   データDL確認 →「ダウンロード」。
         - result:     EVENT RESULT 本体 → TAP SCREEN で送る。
         """
-        frame = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-        # テンプレは cv2.imread（BGR）で読むため、照合は必ず BGR フレームに対して行う。
-        # ハンドラ側からも同じものを使えるよう保持する（RGB のまま照合するとスコアが
-        # 落ちる。実測: きなこパン行 1.000→0.729、フレンド行 0.898→0.793）。
-        self._frame_bgr = frame
+        # テンプレは cv2.imread（BGR）で読むため、照合は必ず BGR フレームに対して行う
+        # （RGB のまま照合するとスコアが落ちる。実測: きなこパン行 1.000→0.729、
+        # フレンド行 0.898→0.793）。ただし**変換は照合するときだけ**行う。ライブ中は
+        # 大半のフレームで照合しないので、毎フレーム変換すると打鍵の分解能を無駄に削る。
+        self._frame_bgr = None
+        _rgb = frame_rgb
+
+        def frame_bgr():
+            if self._frame_bgr is None:
+                self._frame_bgr = cv2.cvtColor(_rgb, cv2.COLOR_RGB2BGR)
+            return self._frame_bgr
+
         bright = float(frame_rgb.mean())
         res = {"_bright": (bright, 0, None)}
 
         def m(key):
             imgs, thr = self.templates[key]
-            score, pos = match_best(frame, imgs)
+            score, pos = match_best(frame_bgr(), imgs)
             res[key] = (score, thr, pos)
             return score >= thr
 
@@ -1099,7 +1120,7 @@ class AutoLive:
                 self._last_dark_check = now_t
                 # 探索範囲を絞って照合（全画面照合は重すぎて打鍵ループを止めてしまう）
                 imgs, thr = self.templates["pause"]
-                score, pos = match_in_box(frame, imgs, PAUSE_SEARCH_BOX)
+                score, pos = match_in_box(frame_bgr(), imgs, PAUSE_SEARCH_BOX)
                 res["pause"] = (score, thr, pos)
                 if score >= thr:
                     return "pause", res
@@ -1209,12 +1230,17 @@ class AutoLive:
                 break
             self._keep_front()
             self._refresh_window()
+            _t = time.time()
             frame = driver.grab(self.win)
+            self._prof["grab"] += time.time() - _t
+            _t = time.time()
             rect = detect_content_rect(frame)
             # 暗いゲーム画面でのみ正しく取れる。取れたらキャッシュし、明るい画面でも一貫使用。
             if rect[1] - rect[0] < frame.shape[0] - 4:
                 self.content = rect
             state, res = self.detect(frame)
+            self._prof["detect"] += time.time() - _t
+            _t = time.time()
             if self.verbose:
                 top3 = sorted(((v[0], k) for k, v in res.items()), reverse=True)[:3]
                 self.log(f"state={state} top={['%s:%.2f' % (k, s) for s, k in top3]} "
@@ -1248,7 +1274,7 @@ class AutoLive:
                 # **押す前に「きなこパン行が実在すること」を画像で確認する。**
                 # 枯渇時は行が消えて詰まり、旧実装は同じオフセットでステラの「回復」を
                 # 押していた（実機で既遂）。見つからなければ**クリックせず停止**する。
-                kscore, kpos = match_best(self._frame_bgr, self.templates["kinakorow"][0])
+                kscore, kpos = match_best(self.bgr(frame), self.templates["kinakorow"][0])
                 if kpos is None or kscore < TEMPLATES["kinakorow"][1]:
                     fn = os.path.join(self.dbg_dir,
                                       f"kinako_missing_{int(time.time()-self.t_start)}.png")
@@ -1390,7 +1416,7 @@ class AutoLive:
                 # **ユーザー要件: 毎回「Don't Analyze Me」を選ぶ**（イベント効率が良い曲）。
                 # 一覧行をテンプレで探して当たればタップ。見つからなければ曲は変更しない
                 # （スクロール位置により画面外のことがあるため、無理に探し回らない＝安全側）。
-                sc, pos = match_best(self._frame_bgr, self.templates["songdaz"][0])
+                sc, pos = match_best(self.bgr(frame), self.templates["songdaz"][0])
                 if pos is not None and sc >= TEMPLATES["songdaz"][1]:
                     self.log(f"楽曲選択 → Don't Analyze Me を選択 (score={sc:.2f})")
                     self.click_match(pos)
@@ -1404,7 +1430,7 @@ class AutoLive:
             elif state == "friendselect":
                 # フレンド（サポート）選択 → **必ず一番上の行**（ユーザー要件）。
                 # アピールスキル ラベルは全行に出るため、最良スコアではなく最上段を選ぶ。
-                score, pos = match_topmost(self._frame_bgr,
+                score, pos = match_topmost(self.bgr(frame),
                                            self.templates["friendselect"][0],
                                            TEMPLATES["friendselect"][1])
                 if pos is None:
@@ -1449,7 +1475,10 @@ class AutoLive:
                     self.loops_done += 1
                     self.was_in_live = False
                     self.log(f"★ライブ クリア（通算 {self.loops_done}）"
-                             f" 打鍵{self.tap_count}回 / 判定{self.frame_count}フレーム")
+                             f" 打鍵{self.tap_count}回 / 判定{self.frame_count}フレーム"
+                             + (f" [取得{self._prof['grab']:.0f}s 判定{self._prof['detect']:.0f}s "
+                                f"打鍵{self._prof['act']:.0f}s]" if self.frame_count else ""))
+                    self._prof = {"grab": 0.0, "detect": 0.0, "act": 0.0}
                     self.tap_count = 0
                     self.frame_count = 0
                     self.result_since = None  # クリア計上＝進捗。停滞タイマーをリセット
@@ -1489,6 +1518,7 @@ class AutoLive:
             if state not in ("menu", "rankup", "closex", "cardx"):
                 self.menu_since = None
             # result/eventresult を抜けたら（=進捗）Result停滞タイマーをリセット。
+            self._prof["act"] += time.time() - _t
             if state not in ("result", "eventresult"):
                 self.result_since = None
             # gameplay タイマーは gameplay/pause（=ライブ中）以外でリセット。

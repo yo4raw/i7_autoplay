@@ -42,7 +42,7 @@ while :; do
   # （実測 2026-08-01: 12連続、ログ全体で「完了: 0 回クリア」71件）。
   if (( rc == 42 )); then
     log "safety stop (rc=42); NOT restarting. 直近のスクショ: /tmp/i7dbg/"
-    touch /tmp/i7_safe_stop_fired
+    touch "${I7_SAFE_FLAG:-/tmp/i7_safe_stop_fired}"
     break
   fi
   # 正常な時間切れ終了か判定: 残り時間がほぼ無ければ終了
@@ -59,7 +59,7 @@ while :; do
     barren=$(( barren + 1 ))
     if (( barren >= 4 )); then
       log "4回連続でクリアが増えないまま終了 → 空転とみなし停止する"
-      touch /tmp/i7_barren_fired
+      touch "${I7_BARREN_FLAG:-/tmp/i7_barren_fired}"
       break
     fi
   fi

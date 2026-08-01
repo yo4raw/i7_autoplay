@@ -105,5 +105,20 @@ class TestStopReasonInitialised(unittest.TestCase):
         self.assertTrue(found, "self.stop_reason = None の初期化が無い")
 
 
+class TestRunUntilBranches(unittest.TestCase):
+    """run_until.sh の分岐を実際に走らせて検証する（シェルは型検査できないため）。
+
+    本番のログ・フラグを壊さないよう、テスト側は I7_RUNNER_LOG / I7_SAFE_FLAG /
+    I7_BARREN_FLAG でテンポラリへ隔離する（実際に一度、本番ログを上書きした）。
+    """
+
+    def test_shell_integration(self):
+        script = os.path.join(ROOT, "tests", "test_run_until.sh")
+        r = subprocess.run(["zsh", script], capture_output=True, text=True,
+                           cwd=ROOT, timeout=180)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertNotIn("NG", r.stdout, r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

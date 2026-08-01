@@ -10,7 +10,8 @@
 set -u
 cd "$(dirname "$0")/../.."
 TARGET="${1:?usage: run_until.sh <target_epoch>}"
-LOG="/tmp/i7_runner.log"
+# パスは環境変数で差し替え可能にする（テストが本番のログ・フラグを壊さないため）。
+LOG="${I7_RUNNER_LOG:-/tmp/i7_runner.log}"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
 
 # ミラーリングが繋がっていてゲーム画面が見えているか（切断画面なら false）
@@ -37,6 +38,10 @@ except Exception:
 PY
 }
 
+SAFE_FLAG="${I7_SAFE_FLAG:-/tmp/i7_safe_stop_fired}"
+BARREN_FLAG="${I7_BARREN_FLAG:-/tmp/i7_barren_fired}"
+rm -f "$SAFE_FLAG" "$BARREN_FLAG"
+
 log "runner start (target=$(date -r "$TARGET" '+%Y-%m-%d %H:%M:%S'))"
 waiting=0
 while :; do
@@ -50,6 +55,18 @@ while :; do
     log "supervisor 起動（残り ${remain}s）"
     tools/ops/supervise_autolive.sh "$TARGET"
     log "supervisor 終了"
+    # supervisor が安全停止／空転打ち切りで抜けたとき、**接続はあるのに再起動すると
+    # 同じ理由でまた止まる**（runner レベルの無限ループ）。切断なら下の connected() が
+    # false になって待機に入るので、ここで見るのは「繋がっているのに止まった」場合だけ。
+    if [[ -e "$SAFE_FLAG" || -e "$BARREN_FLAG" ]]; then
+      if connected; then
+        log "人手が必要な停止（$( [[ -e "$SAFE_FLAG" ]] && echo safe_stop || echo barren )）"
+        log "同じ理由で止まるため runner を終了する。/tmp/i7dbg/ のスクショを確認すること"
+        break
+      fi
+      # 切断が原因だった → フラグを消して待機ループへ（復帰したら再開する）
+      rm -f "$SAFE_FLAG" "$BARREN_FLAG"
+    fi
   else
     if (( waiting == 0 )); then
       log "ミラーリング切断中（iPhone をロックすると自動再接続）。復帰まで待機する"

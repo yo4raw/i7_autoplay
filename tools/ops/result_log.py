@@ -33,11 +33,12 @@ COOLDOWN_SEC = 20.0   # 同じリザルトを二重に保存しない
 # 送ってしまい EXP 画面になる（実測 2.6s では全件 EXP 画面だった）。
 BURST_GAP_SEC = 0.35
 BURST_N = 8
-# スコア画面と EXP 画面の判別。スコア画面は成績欄の背景がクリーム色でほぼ白の画素が多い。
-# 実測: スコア画面 0.60 / EXP画面 0.45。絶対閾値だけに頼らず、バースト内の最大値付近の
-# フレーム群のうち**最後**（＝カウントアップが終わっている）を選ぶ。
-WHITE_FLOOR = 0.52
-WHITE_TOL = 0.03
+# スコア画面の判別は「PERFECT」ラベルのテンプレ照合で行う。
+# 当初は「ほぼ白の画素比率」で判別していたが、**白背景のアイテム獲得ポップアップを
+# スコア画面と誤選択**していた（実測: 蓄積43件がすべてポップアップだった）。
+# ラベル照合なら 実測 スコア画面 1.000 / ポップアップ 0.47 / EXP画面 0.52 と明確に分離する。
+PERFECT_TEMPLATE = "result_perfect.png"
+PERFECT_THRESH = 0.80
 
 
 def crop_stats(frame, win=None):
@@ -46,20 +47,35 @@ def crop_stats(frame, win=None):
     return Image.fromarray(frame[int(h * y0):int(h * y1), int(w * x0):int(w * x1)])
 
 
-def white_frac(frame):
-    """成績欄のほぼ白な画素比率（スコア画面かどうかの指標）。"""
-    c = np.asarray(crop_stats(frame))
-    return float((c.min(axis=2) > 200).mean())
+_PERFECT_IMG = None
+
+
+def _perfect_template():
+    global _PERFECT_IMG
+    if _PERFECT_IMG is None:
+        import cv2
+        path = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))),
+            "assets", "templates", PERFECT_TEMPLATE)
+        _PERFECT_IMG = [cv2.imread(path, cv2.IMREAD_COLOR)]
+    return _PERFECT_IMG
+
+
+def score_screen_score(frame):
+    """「PERFECT」ラベルの一致度。スコア画面かどうかの指標。frame は RGB。"""
+    import cv2
+    bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    return float(autolive.match_best(bgr, _perfect_template())[0])
 
 
 def pick_score_frame(frames):
-    """バーストからスコア画面の最終フレームを選ぶ。無ければ None。"""
-    scored = [(white_frac(f), f) for f in frames]
-    best = max(s for s, _ in scored)
-    if best < WHITE_FLOOR:
-        return None
-    chosen = [f for s, f in scored if s >= best - WHITE_TOL]
-    return chosen[-1]      # 最後＝カウントアップ確定後
+    """バーストからスコア画面の最終フレームを選ぶ。無ければ None。
+
+    「PERFECT」ラベルが写っているフレームだけを候補にし、その**最後**を採る
+    （カウントアップ演出が終わってから撮るため）。
+    """
+    hits = [f for f in frames if score_screen_score(f) >= PERFECT_THRESH]
+    return hits[-1] if hits else None
 
 
 def collect(duration, out_dir):

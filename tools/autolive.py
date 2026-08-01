@@ -144,7 +144,12 @@ ANCH_REPLAY_YES = (86.0, 125.0)   # 連続ライブ 見出し → はい
 ANCH_DOWNLOAD = (55.0, 84.0)      # DL本文 → ダウンロード
 ANCH_STORY_NO = (-68.0, 76.0)     # ストーリー本文 → いいえ
 ANCH_RESUME_YES = (64.0, 62.0)    # 「前回のライブを再開しますか？」→ はい（消費済みLIFEを回収）
-ANCH_KINAKO = (128.0, 62.0)       # ライフが足りません → きなこパン「回復」（上段。ステラ下段は触らない）
+# 【重要・課金事故対策】きなこパンの「回復」は**きなこパン行のラベルを基準に**押す。
+# 見出し（ライフが足りません）基準の旧オフセット ANCH_KINAKO=(128,62) は、きなこパンが
+# 0個になると破綻する: ダイアログはきなこパン行をグレーアウトせず**行ごと消して上に詰める**
+# ため、同じオフセットがステラストーンの「回復」ボタン中央に着弾する。
+# 実機で既に発生済み（ステラ所持 58→55→52。docs/improvements.md C-1）。
+ANCH_KINAKO_ROW = (97.0, 28.5)    # 「きなこパン」ラベル → 同じ行の「回復」ボタン
 ANCH_RANKUP_X = (160.0, -56.0)    # RANK UP! 見出し → ×
 ANCH_LIVEASSIST_START = (203.0, 243.0)  # ライブアシスト見出し → START（アシスト未選択のまま開始＝消費なし）
 
@@ -217,6 +222,9 @@ FLICK_STEPS = 3                  # フリックのドラッグ分割数
 TEMPLATES = {
     "pause": ("pause_resume.png", 0.78),       # 「PAUSE」見出し文字（暗背景でも確実）
     "lifeshort": ("life_short.png", 0.85),     # LIFE不足ダイアログ「ライフが足りません。」
+    # きなこパン行の存在確認用。**これが無ければ LIFE 回復をクリックしない**（ステラ誤消費防止）。
+    # 実測: きなこパン有り 1.000 / 枯渇 0.52 と明確に分離する。
+    "kinakorow": ("kinako_row.png", 0.80),
     "friendreq": ("friendreq_yes.png", 0.74),  # EVENT RESULT の「申請する」ボタン
     "replay": ("replay_title.png", 0.82),      # 連続ライブ再プレイ確認の「連続ライブ」見出し
     "closex": ("close_x.png", 0.87),           # カード型ポップアップ右上の×（緑, 本物≈0.94）
@@ -229,7 +237,7 @@ TEMPLATES = {
     "resumelive": ("resume_live.png", 0.85),
     # 周回対象曲「Don't Analyze Me」の一覧行（ユーザー指定: 効率が良いので毎回これを選ぶ）。
     # 選択中は緑ハイライト、未選択は暗背景で見た目が変わるため variant を併用する。
-    "songdaz": ("song_dontanalyze.png", 0.72),
+    "songdaz": ("song_dontanalyze.png", 0.85),
     "liveassist": ("live_assist.png", 0.85),   # ライブアシスト選択画面 → 何も選ばず START（消費なし）
     # 旧 download_btn.png は「ライブの説明」チュートリアル等を誤検出(0.88)したため撤去。
     # DL確認は dldialog（本文テンプレ, 0.85）でのみ判定する。
@@ -1024,6 +1032,10 @@ class AutoLive:
         - result:     EVENT RESULT 本体 → TAP SCREEN で送る。
         """
         frame = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+        # テンプレは cv2.imread（BGR）で読むため、照合は必ず BGR フレームに対して行う。
+        # ハンドラ側からも同じものを使えるよう保持する（RGB のまま照合するとスコアが
+        # 落ちる。実測: きなこパン行 1.000→0.729、フレンド行 0.898→0.793）。
+        self._frame_bgr = frame
         bright = float(frame_rgb.mean())
         res = {"_bright": (bright, 0, None)}
 
@@ -1183,8 +1195,21 @@ class AutoLive:
                     self.log(f"[warn] LIFE不足が継続（きなこパン枯渇の可能性）→ {fn} 保存。"
                              f"ステラは使わず停止します。")
                     break
-                self.log(f"LIFE不足 → きなこパンで回復（{self.life_recovers}回目, ステラ不使用）")
-                self.click_anchor(res["lifeshort"][2], ANCH_KINAKO)  # きなこパン「回復」（上段。ステラ不使用）
+                # **押す前に「きなこパン行が実在すること」を画像で確認する。**
+                # 枯渇時は行が消えて詰まり、旧実装は同じオフセットでステラの「回復」を
+                # 押していた（実機で既遂）。見つからなければ**クリックせず停止**する。
+                kscore, kpos = match_best(self._frame_bgr, self.templates["kinakorow"][0])
+                if kpos is None or kscore < TEMPLATES["kinakorow"][1]:
+                    fn = os.path.join(self.dbg_dir,
+                                      f"kinako_missing_{int(time.time()-self.t_start)}.png")
+                    from PIL import Image as _I
+                    _I.fromarray(frame).save(fn)
+                    self.log(f"[warn] きなこパン行が見つからない（score={kscore:.2f}）→ "
+                             f"{fn} 保存。**ステラ誤消費を避けるためクリックせず停止**します。")
+                    break
+                self.log(f"LIFE不足 → きなこパンで回復（{self.life_recovers}回目, "
+                         f"ステラ不使用・行確認 score={kscore:.2f}）")
+                self.click_anchor(kpos, ANCH_KINAKO_ROW)  # きなこパン行の「回復」
                 time.sleep(1.3)
                 self.click_center_off(OFF_LIFE_CONFIRM)  # 「N回復しました」確認の×（直後に出るためテンプレ無し→中央アンカー）
                 time.sleep(1.3)
@@ -1310,7 +1335,7 @@ class AutoLive:
                 # **ユーザー要件: 毎回「Don't Analyze Me」を選ぶ**（イベント効率が良い曲）。
                 # 一覧行をテンプレで探して当たればタップ。見つからなければ曲は変更しない
                 # （スクロール位置により画面外のことがあるため、無理に探し回らない＝安全側）。
-                sc, pos = match_best(frame, self.templates["songdaz"][0])
+                sc, pos = match_best(self._frame_bgr, self.templates["songdaz"][0])
                 if pos is not None and sc >= TEMPLATES["songdaz"][1]:
                     self.log(f"楽曲選択 → Don't Analyze Me を選択 (score={sc:.2f})")
                     self.click_match(pos)
@@ -1324,7 +1349,8 @@ class AutoLive:
             elif state == "friendselect":
                 # フレンド（サポート）選択 → **必ず一番上の行**（ユーザー要件）。
                 # アピールスキル ラベルは全行に出るため、最良スコアではなく最上段を選ぶ。
-                score, pos = match_topmost(frame, self.templates["friendselect"][0],
+                score, pos = match_topmost(self._frame_bgr,
+                                           self.templates["friendselect"][0],
                                            TEMPLATES["friendselect"][1])
                 if pos is None:
                     pos = res["friendselect"][2]

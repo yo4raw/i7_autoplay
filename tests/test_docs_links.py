@@ -58,20 +58,6 @@ class TestDocsLinks(unittest.TestCase):
                     broken.append(f"{rel}: {target}")
         self.assertEqual([], broken, "\n".join(broken))
 
-    def test_specification_md_is_a_redirect_stub(self):
-        """1,056行の specification.md は docs/ 配下の6ファイルへ分割した。
-
-        完全削除はしない。tools/autolive.py が6箇所のコメントでこのパスを参照しており、
-        本番3ファイルは段階1では1行も変更しないと決めているため。
-        代わりに行き先を案内する短いスタブを残す。中身が戻ってきたら失敗する。
-        """
-        p = os.path.join(ROOT, "docs", "specification.md")
-        self.assertTrue(os.path.exists(p))
-        with open(p, encoding="utf-8") as fh:
-            text = fh.read()
-        self.assertLess(len(text.splitlines()), 25, "スタブに本文が戻っている")
-        self.assertIn("README.md", text)
-
 
 if __name__ == "__main__":
     unittest.main()

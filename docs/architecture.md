@@ -82,7 +82,7 @@ FSM（「6. 状態遷移仕様（FSM）」）に基づき、ホーム → イベ
 
 ## 6. 状態遷移仕様（FSM）
 
-状態遷移（FSM）の詳細は **`docs/screen-transitions.md`（画面遷移仕様書）** に集約した。
+状態遷移（FSM）の詳細は **[`screen-flow.md`](screen-flow.md)（画面遷移仕様書）** に集約した。
 実機調査で判明した具体的な画面遷移・座標・トラブル対処に加え、本章にあった設計時の
 FSM 概念仕様（S0〜S16）も同書の付録Aに移設している。
 
@@ -119,7 +119,7 @@ assets/templates/
 
 ### 7.5 ROI（関心領域）
 誤検出低減・高速化のため、状態ごとに探索範囲（ROI）を限定可能とする（例: ボタンは画面下部）。
-OCR 対象（累計pt・スタミナ・周回数）も ROI を定義する（本章ではなく [`archive/original-design.md`](archive/original-design.md) 第8章で詳述）。
+OCR 対象（累計pt・スタミナ・周回数）の ROI 定義は**未実装**。
 
 ---
 
@@ -247,4 +247,4 @@ PoC として、実際に**ライブを自動で繰り返しクリアし続け�
     画面キャプチャ遅延(±60-100ms)で PERFECT 安定は不可・GOOD帯中心。
   - **フォールバック**: `--tap-mode rotate` で従来の5円50Hz巡回連打（実績あり）。誤チューニング時の保険。
 - iPhone 切断（「iPhoneが見つかりません」）時の自動「やり直す」再接続。
-- 設定外部化（YAML）・本格 CLI 化（[`archive/original-design.md`](archive/original-design.md) 第9・12章）への移行。
+- 設定外部化（YAML）・本格 CLI 化への移行（当初設計にはあったが未実装）。

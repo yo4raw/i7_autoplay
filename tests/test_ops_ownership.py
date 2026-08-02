@@ -1,6 +1,6 @@
 """運用スクリプト間のプロセス所有権の回帰テスト（実機不要）。
 
-背景（docs/improvements.md H-4、2026-08-01）:
+背景（2026-08-01）:
 run_until.sh が最上位に入ったことで、下位のガードと所有権が競合していた。
 
 - pause_guard.sh は PAUSE 嵐を検知して supervisor を kill するが、run_until が

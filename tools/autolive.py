@@ -3,14 +3,14 @@
 
 iPhone ミラーリング経由で、イベントライブを自動で繰り返しクリアし続ける。
 
-設計の要点（実機調査で判明。詳細は docs/specification.md §17.5-17.6）:
+設計の要点（実機調査で判明。詳細は docs/architecture.md / docs/device-findings.md）:
 - 画面取得は mss（フォーカスを奪わない）。screencapture -l は PAUSE を誘発するため不可。
 - ライブ中の打鍵は2モード（--tap-mode, 既定 timing）:
   - timing: 各タップ円に明るいノーツが到達した瞬間を検出してタップ（_gameplay_timing）。
     円ごとのEMAベースライン比較＋デバウンス。取得+クリック遅延のため ROI を中心側へ早撃ち。
     ノーツ無し区間は _keepalive が genuine 入力を出し続け PAUSE を防ぐ。
     ※種別はタップ最適化。フリック/スライド/ロングは頭だけ取得＝部分点（スワイプ非対応）。
-    しきい値は --calibrate / --note-* で実機調整可能（docs/specification.md §17.5）。
+    しきい値は --calibrate / --note-* で実機調整可能（docs/architecture.md）。
   - rotate: 5円を約50Hzで巡回連打（フォールバック）。ライブはノーツ全見送りでも完走しRESULTに到達。
 - ループは「ライブ → (per-song)Result → EVENT RESULT → 報酬ポップアップ×
   → 連続ライブ再プレイ『はい』 → 次のライブ」をテンプレ駆動で回す（ホーム不要）。
@@ -26,7 +26,7 @@ LIFE 回復（ユーザー要件）:
 - 確認ボタンの盲目連打はしない。未知の明るいダイアログ／閉じられないポップアップは
   一定時間で停止＋スクショ（/tmp/i7dbg）。
 
-ライブ中の自動PAUSE対策（解決済み・最重要。docs/specification.md §17.6 F）:
+ライブ中の自動PAUSE対策（解決済み・最重要。docs/device-findings.md）:
 - iPhone ミラーリングは genuine な HID 入力が数秒ないと iOS アプリをアイドル化し PAUSE させる。
   通常の合成クリック(source=None)はゲームには効くがアイドル判定をリセットしない。
 - 対策: **HIDSystemState のイベントソース**で **実カーソルをワープ + MouseMoved + Down/Up**
@@ -62,7 +62,7 @@ import Quartz
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 import driver  # noqa: E402
 
-# --- ライブ中の自動PAUSE対策（実機実験で確定。docs/specification.md §17.6 E/F） ---
+# --- ライブ中の自動PAUSE対策（実機実験で確定。docs/device-findings.md） ---
 # iPhone ミラーリングは「genuine な HID 入力」が一定時間ないと iOS アプリをアイドル化し
 # ゲームを PAUSE させる。通常の合成クリック（source=None）はこの判定をリセットしないが、
 # **HIDSystemState のイベントソース**で実カーソルを動かしながらクリックすると
@@ -151,7 +151,7 @@ ANCH_RESEND_YES = (68.0, 82.0)      # 「前回のライブ結果の送信が…
 # 見出し（ライフが足りません）基準の旧オフセット ANCH_KINAKO=(128,62) は、きなこパンが
 # 0個になると破綻する: ダイアログはきなこパン行をグレーアウトせず**行ごと消して上に詰める**
 # ため、同じオフセットがステラストーンの「回復」ボタン中央に着弾する。
-# 実機で既に発生済み（ステラ所持 58→55→52。docs/improvements.md C-1）。
+# 実機で既に発生済み（ステラ所持 58→55→52）。
 ANCH_KINAKO_ROW = (97.0, 28.5)    # 「きなこパン」ラベル → 同じ行の「回復」ボタン
 ANCH_RANKUP_X = (160.0, -56.0)    # RANK UP! 見出し → ×
 ANCH_LIVEASSIST_START = (203.0, 243.0)  # ライブアシスト見出し → START（アシスト未選択のまま開始＝消費なし）
@@ -168,7 +168,7 @@ CIRCLES = [
 # "timing": 各円にノーツ（明るい光球）が到達した瞬間を検出してタップ（既定）。
 # "rotate": 5円を約50Hzで巡回連打（実績あるフォールバック。誤チューニング時の保険）。
 TAP_MODE_DEFAULT = "timing"
-# タイミング検出のパラメータ（--calibrate と --note-* で実機調整可能。docs/specification.md §17.5）。
+# タイミング検出のパラメータ（--calibrate と --note-* で実機調整可能。docs/architecture.md）。
 ARC_CENTER = (0.49, 0.50)        # ノーツ放射の中心（円ROIを早撃ち方向へ寄せる基準）
 NOTE_ROI_RADIUS = 0.035          # 円ROI半径（ウィンドウ幅相対, ~18px@529w）
 NOTE_ROI_LEAD = 0.02             # ROIを ARC_CENTER 側へ寄せる量＝取得+クリック遅延の早撃ち補正。
@@ -1083,7 +1083,7 @@ class AutoLive:
     def _keep_front(self, interval=0.4):
         # **最前面なら再アクティブ化しない**。ミラーリングの再アクティブ化(activate)は
         # ライブ中にゲームを PAUSE させるため（端末により顕著）、最前面を失った時だけ復帰させる。
-        # 詳細は docs/specification.md §17.8（PAUSE は activate 連打が主因と判明）。
+        # 詳細は docs/device-findings.md（PAUSE は activate 連打が主因と判明）。
         now = time.time()
         if now - self.last_activate > interval:
             if not self.dry_run and not self._mirror_is_front():

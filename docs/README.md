@@ -14,10 +14,6 @@ macOS の iPhone ミラーリング越しに IDOLiSH7 の累計イベントラ�
 | [`device-findings.md`](device-findings.md) | 実機知見。PAUSE 調査史・ノーツ仕様・端末非依存 | 実機確認済み。**変更前に必読** |
 | [`navigation.md`](navigation.md) | イベント導線・実測座標・LIFE 回復 | 実機確認済み。座標はイベントごとに変わりうる |
 | [`operations.md`](operations.md) | 無人運用・停止条件・復旧・トラブルシューティング | 実機確認済み |
-| [`screen-transitions.md`](screen-transitions.md) | 画面遷移の観察記録 | 観察記録 |
-| [`note-engine-dev.md`](note-engine-dev.md) | ノーツエンジンの開発メモ | 開発メモ |
-| [`improvements.md`](improvements.md) | 全体レビューで洗い出した改善点と、**実機を動かす際の確認項目**。**Critical 1件（ステラ誤消費）は既遂** | 検証済み。着手前に必読 |
-| [`archive/original-design.md`](archive/original-design.md) | 実装前に書いた当初設計。**未実装**（OCR・設定ファイル・CLI 仕様など） | 履歴。実態ではない |
 | [`superpowers/`](superpowers/) | 設計書（specs）と実装計画（plans） | 時点の記録 |
 
 コードの入口は [`../tools/README.md`](../tools/README.md)。
@@ -132,3 +128,4 @@ AUTO 周回作業を、macOS の **iPhone ミラーリング** 経由で自動�
 | 0.13 | 2026-06-08 | **再接続後にPAUSE多発が再燃（[device-findings.md](device-findings.md)「再接続後の PAUSE 再燃（2026-06-08）」）**。[device-findings.md](device-findings.md)「PAUSE 多発の真因と修正（2026-06-07）」とは別物で、activate していない（最前面のまま）のに約5秒ごとにPAUSE。`trigger_test.py` で全入力方式が全滅（tap/touchclick/realclick/iohid_move、各〜5秒でPAUSE）、ミラーリングのクリーン再起動も無効、低電力モード/Mac権限/再起動は否定（同一起動セッション）。結論=再接続セッションで合成入力が genuine と認識されない iPhone 本体側の状態。**復旧は iPhone 本体の電源再投入が最有力**。Mac 側の打ち手は出尽くし |
 | 0.14 | 2026-07-10 | **ハイブリッド打鍵方式を実装（[device-findings.md](device-findings.md)「ハイブリッド打鍵方式（2026-07-10 実装・実機検証待ち）」）**。`--predict`=track種別先読み（緑ホールドはETA駆動解除・赤フリック・不調時タップ劣化）、`--auto-circles`=円自動キャリブレーション（4円全一致時のみ置換・失敗時再試行）。note_engine に TypeForecast/detect_circles/match_circles/`circles`CLI を追加、LANES を補正後円座標に同期し lanes をパラメータ化。unittest スイート新設（合成フレーム・実機不要）。両フラグ既定OFFで無回帰 |
 | 0.15 | 2026-07-30 | **ドキュメントを実態中心に再編**（specification.md 1,056行を README/setup/architecture/device-findings/navigation/operations へ分割、未実装の当初設計は archive/original-design.md へ、本体は案内スタブ化）。tools/ を本番3・ops8・probes12 に3分類。未追跡20ファイルを取り込み、実フレームコーパスは .gitignore。回帰テスト2本を新設。**新知見**: 再接続後のPAUSE再燃を再現し iohid_click も無効と確定（40秒で8回）、イベント「BUDDY Night NARRATIVE」の導線座標、難易度タブのLIFE表示はブースト3倍込みの実消費値 |
+| 0.16 | 2026-08-02 | **docs/ を12→7ファイルに整理**（3,180→約1,500行）。重複した `screen-transitions.md`（`screen-flow.md` と重複）、事実と食い違う `note-engine-dev.md`、転送スタブ `specification.md`、未実装の `archive/original-design.md`、対応済みレビュー `improvements.md` を削除。**「実機を動かす際の確認項目」は [operations.md](operations.md) へ救出**。`tools/autolive.py` のコメント6箇所とテストの背景記述を実在するドキュメントへ張り替えた。削除内容は git 履歴から復元可能（`git show 6d6e34b:docs/improvements.md`）|

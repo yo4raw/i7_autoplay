@@ -812,8 +812,12 @@ class AutoLive:
                 del self.autocal_samples[:-AUTOCAL_MAX_SAMPLES]
             matched = self._ne.consensus_circles(self.autocal_samples, list(CIRCLES))
             if matched is None:
-                self.log(f"[auto-circles] 検出{len(det)}円 "
-                         f"(累計{len(self.autocal_samples)}) → まだ確定せず（再試行）")
+                # 同じ内容を毎回出すとログが埋まる（実測 1万行超）。間引く。
+                self._autocal_fail_n = getattr(self, "_autocal_fail_n", 0) + 1
+                if self._autocal_fail_n <= 3 or self._autocal_fail_n % 100 == 0:
+                    self.log(f"[auto-circles] 検出{len(det)}円 "
+                             f"(累計{len(self.autocal_samples)}) → まだ確定せず"
+                             f"（再試行 {self._autocal_fail_n}回目）")
                 return
             old = list(CIRCLES)
             CIRCLES[:] = matched
@@ -1050,13 +1054,20 @@ class AutoLive:
         except Exception:
             return                      # 切断中など。次回に再試行
         if (int(win["w"]), int(win["h"])) != (int(self.win["w"]), int(self.win["h"])):
+            # **縦長＝ミラーリング切断ダイアログ**（ゲームは常に横向き）。切断中に
+            # 座標系を作り直すと、円キャリブレーションが「検出0円」を延々と再試行し
+            # ログを埋め尽くす（実測 2026-08-02: 1万行超）。切断はゲームの
+            # レイアウト変更ではないので、寸法だけ追従して補正はそのまま維持する。
+            disconnected = win["w"] < win["h"]
             self.log(f"[warn] ウィンドウ寸法が変化: "
                      f"{int(self.win['w'])}x{int(self.win['h'])} → "
-                     f"{int(win['w'])}x{int(win['h'])} → 座標系を作り直す")
+                     f"{int(win['w'])}x{int(win['h'])}"
+                     + ("（切断とみなし補正は維持）" if disconnected else " → 座標系を作り直す"))
             self.content = (38, int(win["h"]) - 9)
-            self._roi_scale_key = None          # ROI スケールを再計算させる
-            self.circles_calibrated = False     # 別レイアウトなので円を取り直す
-            self.autocal_samples = []
+            if not disconnected:
+                self._roi_scale_key = None      # ROI スケールを再計算させる
+                self.circles_calibrated = False  # 別レイアウトなので円を取り直す
+                self.autocal_samples = []
         self.win = win
 
     def bgr(self, frame_rgb):

@@ -18,8 +18,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "tools"))
 import autolive as AL  # noqa: E402
 
-LAND = {"x": 0.0, "y": 39.0, "w": 671.0, "h": 348.0}
-PORT = {"x": 0.0, "y": 39.0, "w": 318.0, "h": 701.0}
+LAND = {"x": 0.0, "y": 39.0, "w": 671.0, "h": 348.0}   # ゲーム（常に横向き）
+PORT = {"x": 0.0, "y": 39.0, "w": 318.0, "h": 701.0}   # 切断ダイアログ（縦長）
+LAND2 = {"x": 0.0, "y": 39.0, "w": 529.0, "h": 334.0}  # 別機種（横向き）
 
 
 def make_al(win):
@@ -45,18 +46,32 @@ class TestRefreshWindow(unittest.TestCase):
         self.assertEqual(318, int(al.win["w"]))
         self.assertEqual(701, int(al.win["h"]))
 
-    def test_resize_rebuilds_derived_state(self):
-        """寸法が変わったら content / ROIスケール / 円キャリブレーションを作り直すこと。
+    def test_landscape_resize_rebuilds_derived_state(self):
+        """**横向きのまま**寸法が変わったら派生状態を作り直すこと（機種/レイアウト変更）。
 
         作り直さないと、古い寸法基準の座標で打鍵し続ける。
         """
         al = make_al(LAND)
-        with mock.patch.object(AL.driver, "find_window", return_value=dict(PORT)):
+        with mock.patch.object(AL.driver, "find_window", return_value=dict(LAND2)):
             al._refresh_window(interval=0.0)
-        self.assertEqual((38, 701 - 9), al.content, "content 矩形が更新されていない")
+        self.assertEqual((38, 334 - 9), al.content, "content 矩形が更新されていない")
         self.assertIsNone(al._roi_scale_key, "ROIスケールのキャッシュが残っている")
         self.assertFalse(al.circles_calibrated, "円キャリブレーションが再実行されない")
         self.assertEqual([], al.autocal_samples, "古い検出サンプルが残っている")
+
+    def test_portrait_means_disconnected_and_keeps_calibration(self):
+        """縦長になったら**切断**とみなし、円キャリブレーションを捨てないこと。
+
+        ゲームは常に横向きなので、縦長＝切断ダイアログ。ここで補正を捨てると
+        切断中ずっと「検出0円」を再試行し続けてログを埋め尽くす
+        （実測 2026-08-02: 1万行超）。復帰後も無補正で打鍵してしまう。
+        """
+        al = make_al(LAND)
+        with mock.patch.object(AL.driver, "find_window", return_value=dict(PORT)):
+            al._refresh_window(interval=0.0)
+        self.assertEqual((38, 701 - 9), al.content, "content は寸法に追従すべき")
+        self.assertTrue(al.circles_calibrated, "切断で円キャリブレーションを捨てている")
+        self.assertEqual(("stale",), al._roi_scale_key, "切断で ROIスケールを捨てている")
 
     def test_same_geometry_keeps_calibration(self):
         """寸法が同じなら円キャリブレーションを捨てないこと（毎回捨てると打鍵が乱れる）。"""

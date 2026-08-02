@@ -16,6 +16,9 @@ venv/
 # 実フレームコーパス（14状態・507枚・69MB。tools/ops/corpus_collector.py で採取する）
 # 大きいので git には入れない。無い環境では tests/test_corpus_smoke.py が skip される。
 /tests/corpus_raw/
+# アプリ再起動からの復帰導線の実機フレーム（2.8MB）。取得手順は
+# docs/navigation.md「アプリ再起動からの復帰導線」。無ければ該当テストは skip。
+/tests/frames_recovery/
 
 # 円自動キャリブレーションの結果キャッシュ（端末ごとの実測値。再起動時の即時復元用）
 /.autocal_circles.json

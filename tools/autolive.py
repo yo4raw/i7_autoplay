@@ -155,6 +155,11 @@ ANCH_RESEND_YES = (68.0, 82.0)      # 「前回のライブ結果の送信が…
 ANCH_KINAKO_ROW = (97.0, 28.5)    # 「きなこパン」ラベル → 同じ行の「回復」ボタン
 ANCH_RANKUP_X = (160.0, -56.0)    # RANK UP! 見出し → ×
 ANCH_LIVEASSIST_START = (203.0, 243.0)  # ライブアシスト見出し → START（アシスト未選択のまま開始＝消費なし）
+# --- アプリ再起動からの復帰（2026-08-02 実機フレーム上で実測） ---
+ANCH_NEWS_CLOSE = (207.5, 6.5)    # お知らせヘッダ「お知らせ」 → 右上の ×
+ANCH_BREAK_NO = (-73.0, 100.0)    # 休憩時間の確認本文 → **いいえ**（はいは絶対に押さない）
+# 1回の実行で復帰を試みる上限。超えたら安全停止する（同じ所を延々回るのを防ぐ）。
+MAX_RECOVERS = 3
 
 # ライブのタップ判定円（**4レーン**, 内容相対小数）。中央(0.49,0.93)はSCORE表示と重なる
 # ダミーで実在レーンではないため除外（無駄打ち＋SCOREアニメの誤検出を排除）。
@@ -270,6 +275,19 @@ TEMPLATES = {
     "friendselect": ("friend_select.png", 0.85),  # フレンド（サポート）選択画面
     "formation": ("formation.png", 0.85),      # 編成画面の「START」ボタン
     "battery": ("battery_close.png", 0.80),    # iOSバッテリー残量低下警告の「閉じる」ボタン
+    # --- アプリ再起動からの復帰（4:00 前後のデータ更新後）。2026-08-02 実機で導線を実測 ---
+    # いずれも**イベント固有の絵は使わない**。バナーの絵柄は毎イベント変わるが、
+    # 「TAP SCREEN」「お知らせ」「EVENT」ラベル帯・「イベント楽曲」・ダイアログ本文は変わらない。
+    # 旧 tap_screen.png / event_songs_btn.png は現在の画面に当たらない（実測 0.54 / 0.42）。
+    # 起動時の注意書きとタイトルの「TAP SCREEN」。variant 機構で2枚を同じ状態に束ねる
+    # （title_tap.png と title_tap_dark.png を glob が拾う）。タイトルの文字は点滅するので
+    # 消えている瞬間は 0.507 で未検出になるが、次のフレームで拾い直す。
+    "title": ("title_tap.png", 0.85),
+    "news": ("news_title.png", 0.85),          # お知らせダイアログのヘッダ「お知らせ」
+    "home": ("home_event.png", 0.85),          # ホームの EVENT ラベル帯（ベージュ＝累計イベント側）
+    "eventtop": ("eventtop_songs.png", 0.85),  # イベントトップの「イベント楽曲」ボタン
+    # 休憩時間中に「イベント楽曲」を押すと出る確認。**「はい」を押すと pt ゼロで LIFE を失う。**
+    "breaktime": ("breaktime.png", 0.85),
 }                                              # ※低電力モードは絶対に押さない（閉じるのみ）
 
 # --- LIFE 回復（ユーザー要件: きなこパンで回復・ステラは絶対に使わない） ---
@@ -463,6 +481,7 @@ class AutoLive:
         self.circle_i = 0
         self.closex_i = 0           # closex 候補位置の巡回インデックス
         self.life_recovers = 0      # 連続 LIFE 回復回数（きなこパン枯渇検知用）
+        self.recovers = 0           # アプリ再起動からの復帰試行回数（暴走防止）
         self.gameplay_since = None  # gameplay 連続継続の開始時刻（異常検知用）
         # --- タイミング検出（timing モード）用 ---
         self.note_baseline = [None] * len(CIRCLES)  # 円ごとの white割合 EMA ベースライン
@@ -1184,6 +1203,22 @@ class AutoLive:
             return "dataupdate", res
         if m("resendresult"):
             return "resendresult", res
+        # --- アプリ再起動からの復帰（4:00 前後のデータ更新後）---
+        # すべて cardx より先に置く。お知らせ・ホームはシアン〜緑の帯を持ち、
+        # detect_card_x にカードヘッダと誤検出されうるため。
+        # **breaktime は必ず eventtop より先。** 休憩ダイアログは「イベント楽曲」ボタンを
+        # 背後に残したまま出るので eventtop_songs が 0.943 で当たる（実測 2026-08-02）。
+        # 逆順にするとダイアログの裏のボタンを押し続けて停滞する。
+        if m("breaktime"):
+            return "breaktime", res
+        if m("title"):
+            return "title", res
+        if m("news"):
+            return "news", res
+        if m("eventtop"):
+            return "eventtop", res
+        if m("home"):
+            return "home", res
         # ライブアシスト選択（formation START 後に出ることがある）。アイテムを選ばず START で
         # 開始すれば消費ゼロ。formation/カード色検出より先に確定する。
         if m("liveassist"):
@@ -1521,6 +1556,54 @@ class AutoLive:
                 self.log("ライブ結果の送信失敗 → 再送する（pt を失わない）")
                 self.click_anchor(res["resendresult"][2], ANCH_RESEND_YES)
                 time.sleep(6.0)
+            elif state == "title":
+                # 起動時の注意書き／タイトルの「TAP SCREEN」。マッチ位置をそのまま押す。
+                # スプラッシュとローディングを挟むので待ちを長めに取る（実測 各6〜8秒）。
+                self.recovers += 1
+                if self.recovers > MAX_RECOVERS:
+                    from PIL import Image as _I
+                    fn = os.path.join(self.dbg_dir,
+                                      f"recover_loop_{int(time.time() - self.t_start)}.png")
+                    _I.fromarray(frame).save(fn)
+                    self.log(f"[warn] 復帰を {MAX_RECOVERS} 回試みても周回に戻れない "
+                             f"→ {fn} 保存して停止")
+                    self.stop_reason = "recover_loop"
+                    break
+                self.log(f"タイトル画面 → TAP SCREEN（復帰 {self.recovers}/{MAX_RECOVERS}）")
+                self.click_match(res["title"][2])
+                time.sleep(2.5)
+            elif state == "news":
+                # お知らせダイアログ → 右上の × で閉じる。ヘッダからのオフセットで押す。
+                self.log("お知らせ → × で閉じる")
+                self.click_anchor(res["news"][2], ANCH_NEWS_CLOSE)
+                time.sleep(1.5)
+            elif state == "home":
+                # ホーム → **EVENT リボン**（ベージュのラベル帯＝累計イベント側）。
+                # ホームの「LIVE」から入ると通常ライブでイベント pt が一切付かない（絶対規則3）
+                # ので、ここでは EVENT ラベルのマッチ位置以外を絶対に押さない。
+                self.log("ホーム → EVENT リボン")
+                self.click_match(res["home"][2])
+                time.sleep(2.0)
+            elif state == "eventtop":
+                # イベントトップ → 「イベント楽曲」。この後 songselect に合流して周回へ戻る。
+                self.log("イベントトップ → イベント楽曲")
+                self.click_match(res["eventtop"][2])
+                time.sleep(2.0)
+            elif state == "breaktime":
+                # **休憩時間中はイベント pt が一切入らない。「はい」を押すと LIFE だけ失う。**
+                # きなこパン枯渇時のステラ誤消費と同種の「気づかず損をする」画面なので、
+                # 必ず「いいえ」で戻ってから停止する。休憩時間帯はゲーム内のユーザー設定で
+                # 可変なので、時刻からは判断しない（このダイアログだけが根拠）。
+                self.log("[warn] 休憩時間中（pt が入らない）→ いいえ で戻り停止する")
+                self.click_anchor(res["breaktime"][2], ANCH_BREAK_NO)
+                time.sleep(1.5)
+                from PIL import Image as _I
+                fn = os.path.join(self.dbg_dir,
+                                  f"break_time_{int(time.time() - self.t_start)}.png")
+                _I.fromarray(frame).save(fn)
+                self.log(f"[warn] 休憩時間帯は {fn} で確認できる")
+                self.stop_reason = "break_time"
+                break
             elif state == "liveassist":
                 # ライブアシスト選択 → **何も選ばず START**（アイテム消費なしでライブ開始）。
                 self.log("ライブアシスト → 未選択のままSTART")

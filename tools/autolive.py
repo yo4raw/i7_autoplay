@@ -156,6 +156,7 @@ ANCH_KINAKO_ROW = (97.0, 28.5)    # 「きなこパン」ラベル → 同じ行
 ANCH_RANKUP_X = (160.0, -56.0)    # RANK UP! 見出し → ×
 ANCH_LIVEASSIST_START = (203.0, 243.0)  # ライブアシスト見出し → START（アシスト未選択のまま開始＝消費なし）
 # --- アプリ再起動からの復帰（2026-08-02 実機フレーム上で実測） ---
+ANCH_TITLE_TAP = (-277.0, -4.5)   # タイトル右下の MENU → 中央下の「TAP SCREEN」
 ANCH_NEWS_CLOSE = (207.5, 6.5)    # お知らせヘッダ「お知らせ」 → 右上の ×
 ANCH_BREAK_NO = (-73.0, 100.0)    # 休憩時間の確認本文 → **いいえ**（はいは絶対に押さない）
 # 1回の実行で復帰を試みる上限。超えたら安全停止する（同じ所を延々回るのを防ぐ）。
@@ -279,10 +280,16 @@ TEMPLATES = {
     # いずれも**イベント固有の絵は使わない**。バナーの絵柄は毎イベント変わるが、
     # 「TAP SCREEN」「お知らせ」「EVENT」ラベル帯・「イベント楽曲」・ダイアログ本文は変わらない。
     # 旧 tap_screen.png / event_songs_btn.png は現在の画面に当たらない（実測 0.54 / 0.42）。
-    # 起動時の注意書きとタイトルの「TAP SCREEN」。variant 機構で2枚を同じ状態に束ねる
-    # （title_tap.png と title_tap_dark.png を glob が拾う）。タイトルの文字は点滅するので
-    # 消えている瞬間は 0.507 で未検出になるが、次のフレームで拾い直す。
-    "title": ("title_tap.png", 0.85),
+    # 起動時の注意書き。「TAP SCREEN」の文字が背景ごと安定している画面（実測 1.000）。
+    "notice": ("notice_tap.png", 0.85),
+    # タイトル画面。**背景は動画で、しかもイベントごとに差し替わる**ため、背景を含む
+    # テンプレは当たらない（実測 2026-08-03: 旧イベントで切った「TAP SCREEN」が新しい
+    # タイトルで 0.85 未満となり、4:00 の復帰がここで 25 秒停滞して止まった）。
+    # 不透明で位置が動かない**右下の MENU ボタン**を目印にする（ユーザー指摘）。
+    # タイトル5フレームで 0.992〜1.000、白飛びするローディングでも 0.734 で当たらない。
+    # ただし**編成画面にも MENU がある**（0.889）ので、しきい値は 0.92 とし、
+    # 判定順も formation の後ろに置く（二重の防御）。
+    "title": ("title_menu.png", 0.92),
     "news": ("news_title.png", 0.85),          # お知らせダイアログのヘッダ「お知らせ」
     "home": ("home_event.png", 0.85),          # ホームの EVENT ラベル帯（ベージュ＝累計イベント側）
     "eventtop": ("eventtop_songs.png", 0.85),  # イベントトップの「イベント楽曲」ボタン
@@ -482,6 +489,7 @@ class AutoLive:
         self.closex_i = 0           # closex 候補位置の巡回インデックス
         self.life_recovers = 0      # 連続 LIFE 回復回数（きなこパン枯渇検知用）
         self.recovers = 0           # アプリ再起動からの復帰試行回数（暴走防止）
+        self.in_recovery = False    # 復帰導線の途中か（周回に戻ると下りる）
         self.gameplay_since = None  # gameplay 連続継続の開始時刻（異常検知用）
         # --- タイミング検出（timing モード）用 ---
         self.note_baseline = [None] * len(CIRCLES)  # 円ごとの white割合 EMA ベースライン
@@ -679,6 +687,30 @@ class AutoLive:
     def click_anchor(self, pos_px, off):
         """テンプレのマッチ位置(フレームpx) + 固定pxオフセットでクリック（画像追従・端末非依存）。"""
         self._click_screen(*self.pixel_to_screen(pos_px[0] + off[0], pos_px[1] + off[1]))
+
+    def _enter_recovery(self, frame):
+        """復帰導線に入ったことを記録する。続行してよければ True。
+
+        **カウントは episode 単位。** タイトル画面は白飛びするローディングを挟んで
+        何度も再検出されるので、フレームごとに数えると一瞬で上限に達してしまう
+        （実測 2026-08-03: ローディングが title として 0.897 で当たる）。
+        周回に戻れたら（gameplay/songselect 等）フラグが下り、次に迷い込んだときが
+        2 回目の復帰になる。
+        """
+        if self.in_recovery:
+            return True
+        self.in_recovery = True
+        self.recovers += 1
+        if self.recovers > MAX_RECOVERS:
+            from PIL import Image as _I
+            fn = os.path.join(self.dbg_dir,
+                              f"recover_loop_{int(time.time() - self.t_start)}.png")
+            _I.fromarray(frame).save(fn)
+            self.log(f"[warn] 復帰を {MAX_RECOVERS} 回試みても周回に戻れない "
+                     f"→ {fn} 保存して停止")
+            self.stop_reason = "recover_loop"
+            return False
+        return True
 
     # --- タイミング検出（timing モード） ---
     def _roi_scale(self, idx):
@@ -1203,22 +1235,6 @@ class AutoLive:
             return "dataupdate", res
         if m("resendresult"):
             return "resendresult", res
-        # --- アプリ再起動からの復帰（4:00 前後のデータ更新後）---
-        # すべて cardx より先に置く。お知らせ・ホームはシアン〜緑の帯を持ち、
-        # detect_card_x にカードヘッダと誤検出されうるため。
-        # **breaktime は必ず eventtop より先。** 休憩ダイアログは「イベント楽曲」ボタンを
-        # 背後に残したまま出るので eventtop_songs が 0.943 で当たる（実測 2026-08-02）。
-        # 逆順にするとダイアログの裏のボタンを押し続けて停滞する。
-        if m("breaktime"):
-            return "breaktime", res
-        if m("title"):
-            return "title", res
-        if m("news"):
-            return "news", res
-        if m("eventtop"):
-            return "eventtop", res
-        if m("home"):
-            return "home", res
         # ライブアシスト選択（formation START 後に出ることがある）。アイテムを選ばず START で
         # 開始すれば消費ゼロ。formation/カード色検出より先に確定する。
         if m("liveassist"):
@@ -1228,6 +1244,26 @@ class AutoLive:
         # リスティックより先に START テンプレで確定する（modal popup なら START は隠れて落ちる）。
         if m("formation"):
             return "formation", res
+        # --- アプリ再起動からの復帰（4:00 前後のデータ更新後）---
+        # すべて cardx より先に置く。お知らせ・ホームはシアン〜緑の帯を持ち、
+        # detect_card_x にカードヘッダと誤検出されうるため。
+        # **formation より後ろ。** title の目印である MENU ボタンは編成画面にもあり
+        # 0.889 で当たる（実測 2026-08-03）。しきい値 0.92 と併せた二重の防御。
+        # **breaktime は必ず eventtop より先。** 休憩ダイアログは「イベント楽曲」ボタンを
+        # 背後に残したまま出るので eventtop_songs が 0.943 で当たる（実測 2026-08-02）。
+        # 逆順にするとダイアログの裏のボタンを押し続けて停滞する。
+        if m("breaktime"):
+            return "breaktime", res
+        if m("title"):
+            return "title", res
+        if m("notice"):
+            return "notice", res
+        if m("news"):
+            return "news", res
+        if m("eventtop"):
+            return "eventtop", res
+        if m("home"):
+            return "home", res
         # 汎用カードポップアップ（報酬獲得/アイテム獲得/獲得一覧 等）の×を色検出で閉じる
         # （端末非依存）。専用ダイアログ判定の後・result の前（Result の上に重なって出るため）。
         # getattr: detect() は result_log 等の外部ツールからも __new__ 生成の
@@ -1320,6 +1356,9 @@ class AutoLive:
             if rect[1] - rect[0] < frame.shape[0] - 4:
                 self.content = rect
             state, res = self.detect(frame)
+            # 周回の本線に戻れたら復帰 episode は終わり（次に迷い込んだら 2 回目）。
+            if state in ("gameplay", "songselect", "friendselect", "formation"):
+                self.in_recovery = False
             self._prof["detect"] += time.time() - _t
             _t = time.time()
             if self.verbose:
@@ -1556,21 +1595,22 @@ class AutoLive:
                 self.log("ライブ結果の送信失敗 → 再送する（pt を失わない）")
                 self.click_anchor(res["resendresult"][2], ANCH_RESEND_YES)
                 time.sleep(6.0)
-            elif state == "title":
-                # 起動時の注意書き／タイトルの「TAP SCREEN」。マッチ位置をそのまま押す。
+            elif state in ("title", "notice"):
+                # 起動時の注意書き／タイトル。どちらも「TAP SCREEN」を押して先へ進む。
                 # スプラッシュとローディングを挟むので待ちを長めに取る（実測 各6〜8秒）。
-                self.recovers += 1
-                if self.recovers > MAX_RECOVERS:
-                    from PIL import Image as _I
-                    fn = os.path.join(self.dbg_dir,
-                                      f"recover_loop_{int(time.time() - self.t_start)}.png")
-                    _I.fromarray(frame).save(fn)
-                    self.log(f"[warn] 復帰を {MAX_RECOVERS} 回試みても周回に戻れない "
-                             f"→ {fn} 保存して停止")
-                    self.stop_reason = "recover_loop"
+                if not self._enter_recovery(frame):
                     break
-                self.log(f"タイトル画面 → TAP SCREEN（復帰 {self.recovers}/{MAX_RECOVERS}）")
-                self.click_match(res["title"][2])
+                if state == "notice":
+                    # 注意書きは「TAP SCREEN」の文字自体が目印なのでその位置を押す。
+                    self.log(f"起動時の注意書き → TAP SCREEN"
+                             f"（復帰 {self.recovers}/{MAX_RECOVERS}）")
+                    self.click_match(res["notice"][2])
+                else:
+                    # タイトルは右下の MENU が目印。文字は点滅し背景も動画なので、
+                    # MENU からのオフセットで中央下の「TAP SCREEN」を押す。
+                    self.log(f"タイトル画面 → TAP SCREEN"
+                             f"（復帰 {self.recovers}/{MAX_RECOVERS}）")
+                    self.click_anchor(res["title"][2], ANCH_TITLE_TAP)
                 time.sleep(2.5)
             elif state == "news":
                 # お知らせダイアログ → 右上の × で閉じる。ヘッダからのオフセットで押す。

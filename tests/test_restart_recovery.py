@@ -33,14 +33,17 @@ AUTOLIVE = os.path.join(ROOT, "tools", "autolive.py")
 FRAMES = os.path.join(ROOT, "tests", "frames_recovery")
 
 # 復帰導線で追加した状態
-RECOVERY_STATES = ("title", "news", "home", "eventtop", "breaktime")
+RECOVERY_STATES = ("notice", "title", "news", "home", "eventtop", "breaktime")
 
 # 実機で撮ったフレームと、detect() が返すべき状態。
 # None は「未検出でよい」（スプラッシュ/ローディング。停滞タイマ内に収まる）。
 CASES = [
-    ("nav01.png", "title", "起動時の注意書き"),
+    ("nav01.png", "notice", "起動時の注意書き"),
     ("nav03_2.png", "title", "タイトル（TAP SCREEN 点灯）"),
-    ("nav03.png", None, "タイトル（TAP SCREEN 消灯）"),
+    ("nav03.png", "title", "タイトル（TAP SCREEN 消灯・MENU で拾う）"),
+    ("nav_title2.png", "title", "4:00 で停滞したタイトル（新イベントの背景）"),
+    ("nav_title3.png", "title", "新しいタイトル背景 その1"),
+    ("nav_title4.png", "title", "新しいタイトル背景 その2"),
     ("nav04.png", None, "Now Loading"),
     ("nav05.png", "news", "お知らせ"),
     ("nav06.png", "news", "お知らせ（ミラーリングのツールバーあり）"),
@@ -68,10 +71,10 @@ def detect_order():
     return out
 
 
-def handler_body(state):
+def handler_body(state, pat=None):
     """_loop() の `elif state == "<state>":` ブロック本文を返す。"""
     src = read_src().split("\n")
-    pat = f'elif state == "{state}":'
+    pat = pat or f'elif state == "{state}":'
     start = next((i for i, l in enumerate(src) if l.strip() == pat), None)
     if start is None:
         return None
@@ -92,13 +95,21 @@ class TestTemplatesRegistered(unittest.TestCase):
         self.assertEqual([], missing, f"読み込めないテンプレ: {missing}")
 
     def test_title_has_two_variants(self):
-        """タイトルは注意書きと動画背景の2枚を束ねること。
+        """タイトルは明背景・暗背景の2枚を束ねること。
 
-        背景が全く違うので1枚では当たらない（実測 0.385）。
+        MENU ボタンは不透明だが、背景の映り込みで 0.92 を割ることがある。
         """
         tpls = AL.load_templates()
         self.assertGreaterEqual(len(tpls["title"][0]), 2,
-                                "title_tap.png / title_tap_dark.png の両方が要る")
+                                "title_menu.png / title_menu_dark.png の両方が要る")
+
+    def test_title_threshold_excludes_formation(self):
+        """編成画面にも MENU ボタンがあり 0.889 で当たる（実測 2026-08-03）。
+
+        しきい値を下げると編成画面をタイトルと誤認し、TAP SCREEN の位置＝
+        編成画面の別のボタンを押してしまう。
+        """
+        self.assertGreaterEqual(AL.TEMPLATES["title"][1], 0.92)
 
 
 class TestDetectOrdering(unittest.TestCase):
@@ -161,7 +172,7 @@ class TestNoHardcodedCoordinates(unittest.TestCase):
     """イベントごとにボタン位置が動くので、固定座標を持ってはいけない。"""
 
     def test_navigation_handlers_use_match_positions(self):
-        for state in ("title", "home", "eventtop"):
+        for state in ("home", "eventtop"):
             with self.subTest(state=state):
                 body = handler_body(state)
                 self.assertIsNotNone(body, f"{state} ハンドラが無い")
@@ -177,9 +188,31 @@ class TestRecoverLoopGuard(unittest.TestCase):
 
     def test_title_handler_is_bounded(self):
         """復帰を無限に繰り返さないこと。"""
-        body = handler_body("title")
-        self.assertIn("MAX_RECOVERS", body)
-        self.assertIn('self.stop_reason = "recover_loop"', body)
+        src = read_src()
+        self.assertIn("_enter_recovery", src)
+        self.assertIn("MAX_RECOVERS", src)
+        self.assertIn('self.stop_reason = "recover_loop"', src)
+
+    def test_recovery_is_counted_per_episode_not_per_frame(self):
+        """フレームごとに数えてはいけない。
+
+        タイトルは白飛びするローディングを挟んで何度も再検出される
+        （実測 2026-08-03: ローディングが title として 0.897 で当たる）。
+        毎フレーム数えると一瞬で上限に達して周回に戻れない。
+        """
+        src = read_src()
+        self.assertIn("self.in_recovery = False", src)
+        self.assertIn("if self.in_recovery:", src)
+
+    def test_title_uses_menu_anchor_not_match_position(self):
+        """タイトルは MENU ボタンが目印なので、そこを押してはいけない。
+
+        押すべきは中央下の「TAP SCREEN」。マッチ位置をそのまま押すと
+        MENU を開いてしまう。
+        """
+        body = handler_body("title", 'elif state in ("title", "notice"):')
+        self.assertIn("ANCH_TITLE_TAP", body)
+        self.assertLess(AL.ANCH_TITLE_TAP[0], 0, "TAP SCREEN は MENU より左")
 
 
 @unittest.skipUnless(os.path.isdir(FRAMES) and os.listdir(FRAMES),

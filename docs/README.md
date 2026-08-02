@@ -9,6 +9,7 @@ macOS の iPhone ミラーリング越しに IDOLiSH7 の累計イベントラ�
 | ファイル | 内容 | 信頼度 |
 |---|---|---|
 | [`setup.md`](setup.md) | 権限付与・依存ライブラリ・接続手順 | 実機確認済み |
+| [`screen-flow.md`](screen-flow.md) | **画面遷移仕様**。認識する画面の一覧・判定順（順序が仕様）・各画面での操作・安全停止の条件・未対応画面の直し方 | 実装から機械的に抽出。テストで整合を検査 |
 | [`architecture.md`](architecture.md) | 2層構成・FSM・座標系・テンプレート管理 | 実機確認済み |
 | [`device-findings.md`](device-findings.md) | 実機知見。PAUSE 調査史・ノーツ仕様・端末非依存 | 実機確認済み。**変更前に必読** |
 | [`navigation.md`](navigation.md) | イベント導線・実測座標・LIFE 回復 | 実機確認済み。座標はイベントごとに変わりうる |

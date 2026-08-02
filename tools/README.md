@@ -14,6 +14,10 @@
 | `driver.py` | 低レベル I/O。ミラーリングウィンドウ検出・`mss` キャプチャ・`CGEventPost` クリック |
 | `note_engine.py` | ノーツのスポーン検出・追跡・種別予報（`--predict` / `--auto-circles` 用、既定 OFF） |
 
+**無人周回の入口は `tools/ops/run_until.sh`。** 楽曲選択画面から起動する手順・
+起動前の確認項目は [`docs/README.md`](../docs/README.md)「周回開始コマンド」。
+下の `autolive.py` 直叩きはデバッグ用。
+
 ```bash
 # 周回（イベントライブ開始済み or 楽曲選択画面から）
 python tools/autolive.py --loops 50 --max-seconds 7200 --flick

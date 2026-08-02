@@ -67,8 +67,10 @@ macOS の **iPhone ミラーリング** 越しに **アイドリッシュセブ�
 python3 -m venv .venv && source .venv/bin/activate
 pip install pyobjc-framework-Quartz pyobjc-framework-Cocoa opencv-python mss numpy Pillow
 
-# 無人周回の標準手順（推奨。落ちても supervisor が自動再起動する）
-nohup tools/ops/supervise_autolive.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &
+# 無人周回の標準手順（ゲームを「イベント楽曲の楽曲選択画面」にしてから実行）
+# run_until.sh が最上位。切断中は待機し、復帰したら自動再開する
+nohup tools/ops/run_until.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &
+# 起動前の確認項目とログの見かたは docs/README.md「周回開始コマンド」
 
 # 単発（ゲームをイベントライブ開始済み or 楽曲選択画面にしてから実行）
 python tools/autolive.py --loops 50 --max-seconds 7200 --flick --auto-circles

@@ -44,6 +44,79 @@ python -u tools/ops/corpus_collector.py 1800    # 30分ぶん採取
 
 ---
 
+## 周回開始コマンド（楽曲選択画面から）
+
+**ゲームを「イベント楽曲の楽曲選択画面」にしてから、次の1行を実行する。**
+
+```bash
+nohup tools/ops/run_until.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &
+```
+
+引数は**終了する UNIX 時刻**。上の例は「今から2時間」。時刻で指定するなら:
+
+```bash
+# 今日の 23:45 まで
+nohup tools/ops/run_until.sh $(date -j -f '%H:%M:%S' '23:45:00' +%s) > /dev/null 2>&1 &
+```
+
+`run_until.sh` が最上位。ミラーリング切断中は supervisor を回さずに待ち、復帰したら
+自動で再開する。`supervise_autolive.sh` を直接叩いてもよいが、切断すると
+「25秒停滞 → 安全停止 → 8秒後に再起動」を延々と繰り返すので**推奨しない**
+（実測 2026-08-01: attempt #7 まで空回り）。
+
+### 起動前に必ず確認する（[絶対規則](../CLAUDE.md)）
+
+楽曲選択画面の下部パネルと持ち物を目視する。**1つでも違ったら実行しない。**
+
+| 確認 | 正しい状態 | 違うとどうなるか |
+|---|---|---|
+| **オート** | **OFF** | ON だと1ライブにつきブリンドリンクを3個消費する |
+| **ブースト** | **3倍** | イベント pt の効率が落ちる |
+| 難易度 | **EASY** | 〃 |
+| 入口 | ホーム**左下のイベントリボン**から入った楽曲 | ホームの「LIVE」から入ると通常ライブで **pt が一切付かない** |
+| きなこパン残量 | 周回数ぶん残っている | 枯渇すると安全停止する（`kinako_missing`） |
+| ステラ所持数 | 開始前の数を控える | 終了後に減っていたら誤消費。詳細は [`operations.md`](operations.md)「実機を動かす際の確認項目」 |
+| 多重起動 | 0件（`pgrep -f 'run_until\|supervise_autolive\|tools/autolive'`） | 2プロセスが同じ画面を叩き合う |
+
+### 成績を貯める（任意・並走可）
+
+チューニングの効果は1ライブでは誤差（±5%）に埋もれる。比較するなら並走させる。
+
+```bash
+nohup python -u tools/ops/result_log.py 7200 <tag> > /tmp/i7dbg/reslog.log 2>&1 &
+python tools/ops/result_log.py montage <tag>      # 蓄積ぶんを1枚にまとめる
+```
+
+### 単発で試す（デバッグ用）
+
+```bash
+python tools/autolive.py --loops 50 --max-seconds 7200 --flick --auto-circles
+python tools/autolive.py --loops 3 --verbose       # 短いデバッグ実行
+python tools/autolive.py --loops 2 --dry-run       # 判定のみ・クリックしない
+```
+
+### 止める
+
+```bash
+pkill -f run_until; pkill -f supervise_autolive; pkill -f tools/autolive
+```
+
+**ライブ（曲）の途中では止めないこと。** その周回ぶんの LIFE が丸ごと無駄になる。
+リザルト画面が出るまで待つ。
+
+### 見るログ
+
+| ファイル | 中身 |
+|---|---|
+| `/tmp/i7_runner.log` | run_until。接続待ち・supervisor の起動と終了 |
+| `/tmp/i7_supervisor.log` | 再起動の履歴 |
+| `/tmp/i7_autorun.log` | autolive 本体。`★ライブ クリア` `[warn]` はここ |
+| `/tmp/i7dbg/` | 安全停止したときのスクリーンショット |
+
+運用中の点検項目は [`operations.md`](operations.md)「実機を動かす際の確認項目」。
+
+---
+
 ## 1. 概要
 
 ### 1.1 目的

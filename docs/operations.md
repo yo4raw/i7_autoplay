@@ -3,8 +3,9 @@
 ## 現在の推奨構成（2026-07-31 実機で確定）
 
 ```bash
-# 無人周回。落ちても supervisor が8秒後に自動再起動する
-nohup tools/ops/supervise_autolive.sh <target_epoch> > /dev/null 2>&1 &
+# 無人周回。楽曲選択画面から実行する（起動手順は README.md「周回開始コマンド」）
+# run_until.sh が最上位。切断中は待機し、supervisor は落ちた autolive を8秒後に再起動する
+nohup tools/ops/run_until.sh <target_epoch> > /dev/null 2>&1 &
 
 # 成績を並走して蓄積（チューニングの効果判定に使う）
 nohup python -u tools/ops/result_log.py 7200 <tag> > /tmp/i7dbg/reslog.log 2>&1 &

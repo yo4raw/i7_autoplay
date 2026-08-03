@@ -56,6 +56,8 @@ CASES = [
     ("nav_supported.png", "supported", "フレンドサポート通知（×が無く はい だけ）"),
     ("nav_dailytask.png", "dailytask", "本日の課題（暗くて gameplay と誤認されていた）"),
     ("nav_home2.png", "home", "ホーム（EVENT リボンが2つ並ぶ）"),
+    ("nav_eventtop2.png", "eventtop", "イベントトップ（背景が変わった状態）"),
+    ("nav_notice2.png", "notice", "起動時の注意書き（別セッション）"),
 ]
 
 
@@ -115,6 +117,68 @@ class TestTemplatesRegistered(unittest.TestCase):
         編成画面の別のボタンを押してしまう。
         """
         self.assertGreaterEqual(AL.TEMPLATES["title"][1], 0.92)
+
+
+@unittest.skipUnless(os.path.isdir(FRAMES) and os.listdir(FRAMES),
+                     "実機フレームが無い（docs/navigation.md の取得手順を参照）")
+class TestTemplateMargins(unittest.TestCase):
+    """テンプレはしきい値から十分離れていること。
+
+    背景を含めて切ると、イベント装飾や背景差し替えで簡単に割れる。実際に:
+    - タイトルの「TAP SCREEN」は新しいイベント背景で 0.85 を割り、
+      2026-08-03 の 4:00 に復帰がそこで止まった
+    - 「イベント楽曲」も背景込みで切っていて 0.874 まで落ちていた
+      （ボタン内側だけに切り直して 1.000・誤検出 0.526 になった）
+
+    **目印にするのは、背景が透けない不透明な部分だけにすること。**
+    """
+
+    # (状態, 当たるべきフレーム)
+    POSITIVE = {
+        "notice": ["nav01.png", "nav_notice2.png"],
+        "title": ["nav03.png", "nav03_2.png", "nav_title2.png",
+                  "nav_title3.png", "nav_title4.png"],
+        "news": ["nav05.png", "nav06.png"],
+        "supported": ["nav_supported.png"],
+        "home": ["nav07.png", "nav_home2.png"],
+        "dailytask": ["nav_dailytask.png"],
+        "eventtop": ["nav08.png", "nav10.png", "nav_eventtop2.png"],
+        "breaktime": ["nav09.png"],
+        "neterror": ["nav_neterror.png"],
+    }
+    MIN_MARGIN = 0.03
+
+    # 「他画面なのに当たって当然」の組み合わせ。判定順で守っているので除外する。
+    # 休憩ダイアログはイベントトップの上に出るため、背後の「イベント楽曲」ボタンが
+    # そのまま見えている（breaktime を eventtop より先に判定することで守る。
+    # TestDetectOrdering.test_breaktime_before_eventtop）。
+    EXEMPT = {"eventtop": {"nav09.png"}}
+
+    def test_margins(self):
+        import cv2
+        tpls = AL.load_templates()
+        neg = [os.path.join(FRAMES, f) for f in sorted(os.listdir(FRAMES))
+               if f.endswith(".png")]
+        for state, pos_names in self.POSITIVE.items():
+            paths = [os.path.join(FRAMES, n) for n in pos_names]
+            paths = [p for p in paths if os.path.exists(p)]
+            if not paths:
+                continue
+            with self.subTest(state=state):
+                imgs, thr = tpls[state]
+                lo = min(AL.match_best(cv2.imread(p, 1), imgs)[0] for p in paths)
+                exempt = self.EXEMPT.get(state, set())
+                others = [p for p in neg
+                          if p not in paths and os.path.basename(p) not in exempt]
+                hi = max(AL.match_best(cv2.imread(p, 1), imgs)[0] for p in others)
+                self.assertGreaterEqual(
+                    lo - thr, self.MIN_MARGIN,
+                    f"{state}: 当たるべきフレームがしきい値に近すぎる "
+                    f"(最低 {lo:.3f} / thr {thr})")
+                self.assertGreaterEqual(
+                    thr - hi, self.MIN_MARGIN,
+                    f"{state}: 他画面のスコアがしきい値に近すぎる "
+                    f"(最大 {hi:.3f} / thr {thr})")
 
 
 class TestDetectOrdering(unittest.TestCase):

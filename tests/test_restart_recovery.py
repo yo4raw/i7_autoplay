@@ -51,6 +51,7 @@ CASES = [
     ("nav08.png", "eventtop", "イベントトップ"),
     ("nav10.png", "eventtop", "イベントトップ（戻り）"),
     ("nav09.png", "breaktime", "休憩時間の確認ダイアログ"),
+    ("nav_neterror.png", "neterror", "通信エラー（cardx と誤認されていた）"),
 ]
 
 
@@ -166,6 +167,41 @@ class TestBreakTimeSafety(unittest.TestCase):
         """
         self.assertLess(AL.ANCH_BREAK_NO[0], 0, "いいえは本文より左")
         self.assertGreater(AL.ANCH_BREAK_NO[1], 0, "いいえは本文より下")
+
+
+class TestNetworkError(unittest.TestCase):
+    """「通信エラーが発生しました。」は cardx と誤認され、背景タップでは閉じられない。
+
+    実測 2026-08-03: 1745 回タップして cardx_stuck で停止し、周回が 0 周で終わった。
+    """
+
+    def test_detected_before_cardx(self):
+        order = detect_order()
+        self.assertIn("neterror", order)
+        self.assertLess(order.index("neterror"), order.index("cardx"))
+
+    def test_handler_retries_not_gives_up(self):
+        """「諦める」を押すとその周回ぶんを落とす。必ず「リトライ」。"""
+        body = handler_body("neterror")
+        self.assertIsNotNone(body, "neterror ハンドラが無い")
+        self.assertIn("ANCH_NETERROR_RETRY", body)
+
+    def test_retry_anchor_points_right(self):
+        """リトライは本文の右下。左は「諦める」なので符号を間違えてはいけない。"""
+        self.assertGreater(AL.ANCH_NETERROR_RETRY[0], 0, "リトライは本文より右")
+        self.assertGreater(AL.ANCH_NETERROR_RETRY[1], 0, "リトライは本文より下")
+
+    def test_retries_are_bounded(self):
+        """回線障害で無限に粘らないこと。"""
+        body = handler_body("neterror")
+        self.assertIn("MAX_NET_RETRIES", body)
+        self.assertIn('self.stop_reason = "net_error"', body)
+
+    def test_counter_resets_on_progress(self):
+        """通算ではなく連続で数えること（長時間運用では一時的なエラーが何度も起きる）。"""
+        src = read_src()
+        self.assertIn('if state != "neterror":', src)
+        self.assertIn("self.net_retries = 0", src)
 
 
 class TestNoHardcodedCoordinates(unittest.TestCase):

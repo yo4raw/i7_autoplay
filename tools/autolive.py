@@ -157,6 +157,8 @@ ANCH_RANKUP_X = (160.0, -56.0)    # RANK UP! 見出し → ×
 ANCH_LIVEASSIST_START = (203.0, 243.0)  # ライブアシスト見出し → START（アシスト未選択のまま開始＝消費なし）
 # --- アプリ再起動からの復帰（2026-08-02 実機フレーム上で実測） ---
 ANCH_TITLE_TAP = (-277.0, -4.5)   # タイトル右下の MENU → 中央下の「TAP SCREEN」
+ANCH_NETERROR_RETRY = (66.0, 79.0)  # 「通信エラーが発生しました。」→ **リトライ**（左の諦めるは押さない）
+MAX_NET_RETRIES = 8               # 通信エラーの連続リトライ上限（回線障害で無限に粘らない）
 ANCH_NEWS_CLOSE = (207.5, 6.5)    # お知らせヘッダ「お知らせ」 → 右上の ×
 ANCH_BREAK_NO = (-73.0, 100.0)    # 休憩時間の確認本文 → **いいえ**（はいは絶対に押さない）
 # 1回の実行で復帰を試みる上限。超えたら安全停止する（同じ所を延々回るのを防ぐ）。
@@ -264,6 +266,10 @@ TEMPLATES = {
     # タイトル復帰後に出る「前回のライブ結果の送信が正しく終了しませんでした」。
     # **再送する**を選ばないと直前のライブぶんの pt が失われる。
     "resendresult": ("resend_result.png", 0.85),
+    # 「通信エラーが発生しました。」→ **リトライ**（諦めるとその周回を落とす）。
+    # シアン系ヘッダを持つため cardx と誤認され、背景タップでは閉じられず停滞していた
+    # （実測 2026-08-03: 1745 回タップして cardx_stuck で停止）。
+    "neterror": ("net_error.png", 0.85),
     "liveassist": ("live_assist.png", 0.85),   # ライブアシスト選択画面 → 何も選ばず START（消費なし）
     # 旧 download_btn.png は「ライブの説明」チュートリアル等を誤検出(0.88)したため撤去。
     # DL確認は dldialog（本文テンプレ, 0.85）でのみ判定する。
@@ -490,6 +496,7 @@ class AutoLive:
         self.life_recovers = 0      # 連続 LIFE 回復回数（きなこパン枯渇検知用）
         self.recovers = 0           # アプリ再起動からの復帰試行回数（暴走防止）
         self.in_recovery = False    # 復帰導線の途中か（周回に戻ると下りる）
+        self.net_retries = 0        # 通信エラーの連続リトライ回数
         self.gameplay_since = None  # gameplay 連続継続の開始時刻（異常検知用）
         # --- タイミング検出（timing モード）用 ---
         self.note_baseline = [None] * len(CIRCLES)  # 円ごとの white割合 EMA ベースライン
@@ -1235,6 +1242,9 @@ class AutoLive:
             return "dataupdate", res
         if m("resendresult"):
             return "resendresult", res
+        # 通信エラーもシアン系ヘッダを持つので cardx より先に確定する。
+        if m("neterror"):
+            return "neterror", res
         # ライブアシスト選択（formation START 後に出ることがある）。アイテムを選ばず START で
         # 開始すれば消費ゼロ。formation/カード色検出より先に確定する。
         if m("liveassist"):
@@ -1359,6 +1369,10 @@ class AutoLive:
             # 周回の本線に戻れたら復帰 episode は終わり（次に迷い込んだら 2 回目）。
             if state in ("gameplay", "songselect", "friendselect", "formation"):
                 self.in_recovery = False
+            # 通信エラーが解消したら連続カウントをリセットする（長時間運用では
+            # 一時的なエラーが何度も起きうるので、通算ではなく連続で数える）。
+            if state != "neterror":
+                self.net_retries = 0
             self._prof["detect"] += time.time() - _t
             _t = time.time()
             if self.verbose:
@@ -1644,6 +1658,23 @@ class AutoLive:
                 self.log(f"[warn] 休憩時間帯は {fn} で確認できる")
                 self.stop_reason = "break_time"
                 break
+            elif state == "neterror":
+                # 「通信エラーが発生しました。」→ **リトライ**。
+                # 「諦める」を選ぶとその周回ぶんを落とす。回線が落ちている場合に
+                # 無限に粘らないよう、連続リトライ回数に上限を設ける。
+                self.net_retries += 1
+                if self.net_retries > MAX_NET_RETRIES:
+                    from PIL import Image as _I
+                    fn = os.path.join(self.dbg_dir,
+                                      f"net_error_{int(time.time() - self.t_start)}.png")
+                    _I.fromarray(frame).save(fn)
+                    self.log(f"[warn] 通信エラーが {MAX_NET_RETRIES} 回続く "
+                             f"→ {fn} 保存して停止（回線を確認すること）")
+                    self.stop_reason = "net_error"
+                    break
+                self.log(f"通信エラー → リトライ（{self.net_retries}/{MAX_NET_RETRIES}）")
+                self.click_anchor(res["neterror"][2], ANCH_NETERROR_RETRY)
+                time.sleep(3.0)
             elif state == "liveassist":
                 # ライブアシスト選択 → **何も選ばず START**（アイテム消費なしでライブ開始）。
                 self.log("ライブアシスト → 未選択のままSTART")

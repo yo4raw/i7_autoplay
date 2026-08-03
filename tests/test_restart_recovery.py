@@ -33,7 +33,8 @@ AUTOLIVE = os.path.join(ROOT, "tools", "autolive.py")
 FRAMES = os.path.join(ROOT, "tests", "frames_recovery")
 
 # 復帰導線で追加した状態
-RECOVERY_STATES = ("notice", "title", "news", "home", "eventtop", "breaktime")
+RECOVERY_STATES = ("notice", "title", "news", "home", "eventtop", "breaktime",
+                   "supported")   # dailytask は暗い側で判定するので別枠
 
 # 実機で撮ったフレームと、detect() が返すべき状態。
 # None は「未検出でよい」（スプラッシュ/ローディング。停滞タイマ内に収まる）。
@@ -52,6 +53,9 @@ CASES = [
     ("nav10.png", "eventtop", "イベントトップ（戻り）"),
     ("nav09.png", "breaktime", "休憩時間の確認ダイアログ"),
     ("nav_neterror.png", "neterror", "通信エラー（cardx と誤認されていた）"),
+    ("nav_supported.png", "supported", "フレンドサポート通知（×が無く はい だけ）"),
+    ("nav_dailytask.png", "dailytask", "本日の課題（暗くて gameplay と誤認されていた）"),
+    ("nav_home2.png", "home", "ホーム（EVENT リボンが2つ並ぶ）"),
 ]
 
 
@@ -202,6 +206,58 @@ class TestNetworkError(unittest.TestCase):
         src = read_src()
         self.assertIn('if state != "neterror":', src)
         self.assertIn("self.net_retries = 0", src)
+
+
+class TestDialogsWithoutCloseX(unittest.TestCase):
+    """×が無いダイアログは cardx の背景タップでは閉じられない。
+
+    実測 2026-08-03: 4:00 の復帰導線でホーム到達直後に
+    「ライブをN回サポートしました。」（はい だけ）が出る。
+    """
+
+    def test_supported_before_cardx(self):
+        order = detect_order()
+        self.assertIn("supported", order)
+        self.assertLess(order.index("supported"), order.index("cardx"))
+
+    def test_supported_presses_yes(self):
+        body = handler_body("supported")
+        self.assertIsNotNone(body, "supported ハンドラが無い")
+        self.assertIn("ANCH_SUPPORTED_YES", body)
+
+
+class TestDailyTaskPopup(unittest.TestCase):
+    """イベントトップの「本日の課題」は暗くて gameplay と誤判定される。
+
+    実測 2026-08-03: mean 58.2 < DARK_THRESH 65。放置すると打鍵エンジンが動き、
+    円の位置（(221,295)/(456,295)）にある「イベント楽曲へ」ボタンを叩いて
+    制御外の遷移を起こす。
+    """
+
+    def test_judged_in_the_dark_path(self):
+        """明るい側に置いても意味がない（そこまで到達しない）。"""
+        src = read_src()
+        start = src.index("if bright < DARK_THRESH:")
+        end = src.index('return "gameplay", res', start)
+        self.assertIn('m("dailytask")', src[start:end],
+                      "dailytask は暗い側の判定に置くこと")
+
+    def test_shares_the_throttled_recheck(self):
+        """毎フレーム照合すると打鍵ループが死ぬ（過去に 3.3 FPS まで落ちた）。
+
+        songselect 救済と同じ間引き枠（DARK_RECHECK_SEC）に相乗りしていること。
+        """
+        src = read_src()
+        start = src.index("if bright < DARK_THRESH:")
+        end = src.index('return "gameplay", res', start)
+        dark = src[start:end]
+        self.assertIn("self._last_dark_check", dark)
+        self.assertLess(dark.index("self._last_dark_check"), dark.index('m("dailytask")'))
+
+    def test_handler_closes_with_x(self):
+        body = handler_body("dailytask")
+        self.assertIsNotNone(body, "dailytask ハンドラが無い")
+        self.assertIn("ANCH_DAILYTASK_X", body)
 
 
 class TestNoHardcodedCoordinates(unittest.TestCase):

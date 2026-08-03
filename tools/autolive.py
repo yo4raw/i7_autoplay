@@ -158,6 +158,8 @@ ANCH_LIVEASSIST_START = (203.0, 243.0)  # ライブアシスト見出し → STA
 # --- アプリ再起動からの復帰（2026-08-02 実機フレーム上で実測） ---
 ANCH_TITLE_TAP = (-277.0, -4.5)   # タイトル右下の MENU → 中央下の「TAP SCREEN」
 ANCH_NETERROR_RETRY = (66.0, 79.0)  # 「通信エラーが発生しました。」→ **リトライ**（左の諦めるは押さない）
+ANCH_SUPPORTED_YES = (-21.0, 84.5)  # 「…サポートしました。」→ はい（×が無いので背景タップでは閉じない）
+ANCH_DAILYTASK_X = (262.2, -14.2)   # 「本日の課題」見出し → 右上の ×
 MAX_NET_RETRIES = 8               # 通信エラーの連続リトライ上限（回線障害で無限に粘らない）
 ANCH_NEWS_CLOSE = (207.5, 6.5)    # お知らせヘッダ「お知らせ」 → 右上の ×
 ANCH_BREAK_NO = (-73.0, 100.0)    # 休憩時間の確認本文 → **いいえ**（はいは絶対に押さない）
@@ -270,6 +272,15 @@ TEMPLATES = {
     # シアン系ヘッダを持つため cardx と誤認され、背景タップでは閉じられず停滞していた
     # （実測 2026-08-03: 1745 回タップして cardx_stuck で停止）。
     "neterror": ("net_error.png", 0.85),
+    # 「ライブをN回サポートしました。/ NフレンドptをΩ手に入れました。」→ はい。
+    # **×が無く「はい」だけ**なので cardx の背景タップでは閉じられず停滞する
+    # （実測 2026-08-03: 4:00 の復帰導線でホーム到達直後に出る）。
+    # 数字は毎回変わるので「サポートしました。」の部分だけを見る。
+    "supported": ("supported.png", 0.85),
+    # イベントトップの「本日の課題 N/4」ポップアップ。**画面が暗く gameplay と誤判定される**
+    # （実測 mean 58.2 < DARK_THRESH 65）。判定は暗い側の救済枠で行う（下の detect 参照）。
+    # 「1/4」の進捗は変わるので見出しの文字だけを見る。
+    "dailytask": ("daily_task.png", 0.85),
     "liveassist": ("live_assist.png", 0.85),   # ライブアシスト選択画面 → 何も選ばず START（消費なし）
     # 旧 download_btn.png は「ライブの説明」チュートリアル等を誤検出(0.88)したため撤去。
     # DL確認は dldialog（本文テンプレ, 0.85）でのみ判定する。
@@ -1209,6 +1220,13 @@ class AutoLive:
                     return "pause", res
                 if bright > 50.0 and m("songselect"):
                     return "songselect", res
+                # イベントトップの「本日の課題」ポップアップは mean≈58 で暗判定に落ちる。
+                # 放置すると打鍵エンジンが動き、円の位置にある「イベント楽曲へ」ボタンを
+                # 叩いて制御外の遷移を起こす（実測 2026-08-03）。songselect と同じ
+                # 間引き枠で確認するので、ライブ中の追加コストはほぼ無い
+                # （gameplay 40 フレーム中 mean>50 は 1 枚だけ）。
+                if bright > 50.0 and m("dailytask"):
+                    return "dailytask", res
             return "gameplay", res
         # --- 明るい画面（タイミング非依存。毎フレーム照合でよい）---
         if m("pause"):
@@ -1245,6 +1263,9 @@ class AutoLive:
         # 通信エラーもシアン系ヘッダを持つので cardx より先に確定する。
         if m("neterror"):
             return "neterror", res
+        # 「…サポートしました。」はシアン系ヘッダを持つうえ×が無い。cardx より先に確定する。
+        if m("supported"):
+            return "supported", res
         # ライブアシスト選択（formation START 後に出ることがある）。アイテムを選ばず START で
         # 開始すれば消費ゼロ。formation/カード色検出より先に確定する。
         if m("liveassist"):
@@ -1675,6 +1696,18 @@ class AutoLive:
                 self.log(f"通信エラー → リトライ（{self.net_retries}/{MAX_NET_RETRIES}）")
                 self.click_anchor(res["neterror"][2], ANCH_NETERROR_RETRY)
                 time.sleep(3.0)
+            elif state == "supported":
+                # 「ライブをN回サポートしました。」→ はい。×が無いので背景タップでは閉じない。
+                self.log("フレンドサポート通知 → はい")
+                self.click_anchor(res["supported"][2], ANCH_SUPPORTED_YES)
+                time.sleep(1.5)
+            elif state == "dailytask":
+                # イベントトップの「本日の課題」→ 右上の × で閉じる。
+                # 暗いので gameplay と誤判定されるが、打鍵させてはいけない
+                # （円の位置に「イベント楽曲へ」ボタンがある）。
+                self.log("本日の課題 → × で閉じる")
+                self.click_anchor(res["dailytask"][2], ANCH_DAILYTASK_X)
+                time.sleep(1.5)
             elif state == "liveassist":
                 # ライブアシスト選択 → **何も選ばず START**（アイテム消費なしでライブ開始）。
                 self.log("ライブアシスト → 未選択のままSTART")

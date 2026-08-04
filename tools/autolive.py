@@ -201,7 +201,9 @@ NOTE_DEBOUNCE_SEC = 0.18         # 1ノーツ=1タップ（タップ波紋の再
 HOLD_SUSTAIN_FRAMES = 14         # この連続フレーム数トリガー超持続で「長押し」と判定（≈0.45s@30fps）。
                                  # タップ波紋は~0.2-0.3s持続するため、誤検出回避に本物の長押し
                                  # (0.5s+)が確実に超える値に設定（6では波紋を誤検出した実測）。
-HOLD_MAX_SEC = 2.5               # 1ホールドの最大保持秒（誤検出でも必ず離す上限）
+HOLD_MAX_SEC = 8.0               # 1ホールドの最大保持秒（誤検出でも必ず離す上限）。
+                                 # 実測した長さは 0.3〜0.5秒だが曲により長い可能性があるので広く取る。
+                                 # --hold-max-sec で上書き可。
 HOLD_REL_FACTOR = 0.45           # 保持解除のしきい（trigger×これ を下回ったら離す＝ヒステリシス）
 # --- 実験的トラッキングエンジン(engine=track) ---
 TRACK_ARRIVE_PX = 34.0           # ノーツがレーン円のこのpx内に来たら打鍵
@@ -234,6 +236,27 @@ FLICK_RED_MIN_V = 120            # 検色: 明るい画素の閾値
 FLICK_RED_DELTA = 40             # 明るい画素平均で R-G,R-B がこれ以上なら「赤ノーツ」
 FLICK_RED_MEMORY = 0.35          # 到達直前で赤を見てから、この秒内にタップしたらフリック扱い
 FLICK_DIST = 0.06               # フリック移動量（ウィンドウ幅相対, 外向き）
+# --- 緑ノーツ（次の緑まで長押し）。2026-08-04 実機3ライブで実測 ---
+# 緑は**2つが緑の帯で繋がって**同じ放射線上を同じ円へ飛ぶ。approach 点での緑画素は
+# 「立ち上がり→山(頭)→谷(帯)→山(尾)→消失」と推移する。
+# **検色点は赤(0.65)と別の 0.70。** 0.65 だと判定文字「GOOD」が ROI に重なる（1ライブに
+# 約110回出る）。0.70 なら外れ、しかも色は濃くなる（赤の R-G が 70→82）。0.75 以上は白飛び。
+GREEN_APPROACH_FRAC = 0.70
+# 判別は**緑画素の「数」**で行う。明るい画素の色平均や白率では GOOD 文字と区別できない
+# （実測: 緑ノーツの白率 0.00〜0.40 に対し GOOD 文字 0.37 で完全に重なる）。
+# 画素数なら本物 700〜1064 に対しノイズ 21〜85 と 8 倍差がつく。
+# **しきい値は実測の分離幅から決めた。** 判定文字「GOOD」は 0.70 でも円によっては ROI に
+# 入る（文字はタップした円の近くに出るため、位置をずらすだけでは避けきれない）。
+#   判定文字・背景ノイズ: 最大 439px（コーパス78枚×4円）
+#   本物の緑ノーツ:       最低 766px（実機4円のピーク）
+# 誤検出は最大 8 秒ぶん他レーンを落とすのに対し、取り逃しは従来動作（頭を1回タップ）に
+# 戻るだけ。**非対称なので誤検出を避ける側に寄せる。**
+GREEN_MIN_PX = 600               # これを超えたら緑ノーツが approach に居る
+GREEN_REL_PX = 250               # 解除側のしきい（ヒステリシス。通過中の一瞬の途切れで早期解除しない）
+GREEN_MEMORY = 0.35              # 緑を見てから、この秒内に fired したらホールド扱い（赤と同値）
+# 判定文字は**タップの後にしか出ない**。同じ円を叩いた直後は緑を見ない（第二の防御）。
+# EASY では同じレーンに 0.45 秒以内で続けてノーツが来ることは稀。
+GREEN_SUPPRESS_SEC = 0.45
 FLICK_STEPS = 3                  # フリックのドラッグ分割数
 
 # テンプレ（assets/templates/*.png）。明るさゲートと併用し高閾値照合する。
@@ -488,6 +511,7 @@ class AutoLive:
     def __init__(self, max_loops, dry_run=False, verbose=False, max_seconds=None,
                  tap_mode=TAP_MODE_DEFAULT, note_trigger=NOTE_TRIGGER_FRAC,
                  note_lead=NOTE_ROI_LEAD, note_roi=NOTE_ROI_RADIUS, holds=False,
+                 green_hold=False, hold_max_sec=HOLD_MAX_SEC,
                  engine="roi", esc_enabled=True, flick=False, predict=False,
                  auto_circles=False):
         self.max_loops = max_loops
@@ -512,13 +536,21 @@ class AutoLive:
         # --- タイミング検出（timing モード）用 ---
         self.note_baseline = [None] * len(CIRCLES)  # 円ごとの white割合 EMA ベースライン
         self.note_last_tap = [0.0] * len(CIRCLES)   # 円ごとの直近タップ時刻（デバウンス）
-        self.holds = holds          # 長押し（緑）対応の有効/無効
+        self.holds = holds          # 長押し（緑）対応の有効/無効（旧・輝度方式）
+        self.green_hold = green_hold  # 緑ノーツの長押し（色方式）
+        self.hold_max_sec = hold_max_sec
         self.note_hi_frames = [0] * len(CIRCLES)  # 円ごとのトリガー超持続フレーム数（長押し検出）
         self.hold_idx = None        # 現在ホールド中の円index（Noneなら非ホールド）
         self.hold_start = 0.0       # ホールド開始時刻（HOLD_MAX_SEC上限用）
         # --- ノーツ種別対応（赤=フリック）。到達直前ROIの色で判定（§17.9） ---
         self.flick = flick          # 赤ノーツでフリック（タップ→外向きスワイプ）を行う
         self.note_red_seen = [0.0] * len(CIRCLES)  # 円ごとに到達直前ROIで赤を見た直近時刻
+        # --- 緑ホールド（--green-hold）---
+        self.green_since = [None] * len(CIRCLES)   # 緑が approach に現れた時刻（消えたら None）
+        self.green_px = [0] * len(CIRCLES)         # 直近フレームの緑画素数
+        self.green_peak = [0] * len(CIRCLES)       # 今回の通過でのピーク（ログ用。現在値は着弾前に減る）
+        self.ghold_release_at = None               # 解除予定時刻（緑が通過し切ったら入る）
+        self.ghold_transit = 0.0                   # このホールドで実測した飛行時間
         # --- 種別先読み（--predict）。track を並走させ緑ホールド/赤フリックを出し分け ---
         self.predict = predict      # 既定 False（OFF時は現行と同一パス）
         self.forecast = None        # note_engine.TypeForecast（predict時に遅延生成）
@@ -805,6 +837,32 @@ class AutoLive:
         rr, gg, bb = bright.mean(axis=0)
         return (rr - gg) > FLICK_RED_DELTA and (rr - bb) > FLICK_RED_DELTA
 
+    def _approach_green(self, frame, idx):
+        """円 idx の到達直前ROIに居る「緑画素の数」を返す。frame は RGB。
+
+        **数で判定する理由**: 明るい画素の色平均や白率では判定文字「GOOD」と区別できない
+        （実測 2026-08-04: 緑ノーツの白率 0.00〜0.40 に対し GOOD 文字 0.37 で完全に重なる）。
+        画素数なら本物 700〜1064 / ノイズ 21〜85 と 8 倍差がつく。
+
+        検色点は赤(FLICK_APPROACH_FRAC=0.65)ではなく GREEN_APPROACH_FRAC(0.70)。
+        0.65 だと GOOD 文字が ROI に入る。
+        """
+        h, w = frame.shape[:2]
+        xf, yf = CIRCLES[idx]
+        xf = xf + (ARC_CENTER[0] - xf) * (1 - GREEN_APPROACH_FRAC)
+        yf = yf + (ARC_CENTER[1] - yf) * (1 - GREEN_APPROACH_FRAC)
+        top, bottom = self.content
+        ch = bottom - top
+        cx = int(self.win["w"] * xf)
+        cy = int(top + yf * ch)
+        r = int(self.win["w"] * self.note_roi)
+        x0, y0, x1, y1 = max(0, cx - r), max(0, cy - r), min(w, cx + r), min(h, cy + r)
+        if x1 <= x0 or y1 <= y0:
+            return 0
+        roi = frame[y0:y1, x0:x1].astype(int)
+        R, G, B = roi[:, :, 0], roi[:, :, 1], roi[:, :, 2]
+        return int(((G - R > 25) & (G - B > 25) & (G > 100)).sum())
+
     def _flick(self, idx):
         """円 idx で フリック: 押下→外向き(中心と反対)へドラッグ→離す。種別=赤ノーツ用。"""
         sx, sy = self.content_to_screen(*CIRCLES[idx])
@@ -948,6 +1006,56 @@ class AutoLive:
                 if self._approach_red(frame, i):
                     self.note_red_seen[i] = now
 
+        # 1.6) 緑の在/不在を毎フレーム更新。**「居なくなった瞬間」が解除の合図**なので、
+        #      保持中も測り続ける必要がある（ホールドの長さに依存しない作りの要）。
+        if self.green_hold:
+            for i in range(len(CIRCLES)):
+                # 判定文字（GOOD）はタップの後に出る。叩いた直後は緑を見ない。
+                if (self.hold_idx != i
+                        and now - self.note_last_tap[i] < GREEN_SUPPRESS_SEC):
+                    self.green_px[i] = 0
+                    self.green_since[i] = None
+                    self.green_peak[i] = 0
+                    continue
+                px = self._approach_green(frame, i)
+                self.green_px[i] = px
+                thr = GREEN_REL_PX if self.green_since[i] is not None else GREEN_MIN_PX
+                if px >= thr:
+                    if self.green_since[i] is None:
+                        self.green_since[i] = now   # 緑が現れた（飛行時間の計測開始）
+                        self.green_peak[i] = 0
+                    self.green_peak[i] = max(self.green_peak[i], px)
+                else:
+                    self.green_since[i] = None
+
+        # 2g) 緑ホールド継続中（--green-hold）。**輝度は一切使わない。**
+        #     押下で円が光り続けるため fired が立ちっぱなしになり「次のノーツ」と区別できない
+        #     （旧 --holds が壊れた原因）。approach 点の緑の在/不在だけで判断する。
+        if self.green_hold and self.hold_idx is not None and self.ghold_release_at is not None:
+            i = self.hold_idx
+            held = now - self.hold_start
+            if self.green_since[i] is not None:
+                # まだ構造（頭＋帯＋尾）が通過中 → 解除予定を先送りして押し続ける
+                self.ghold_release_at = now + self.ghold_transit
+            if held >= self.hold_max_sec:
+                reason = "上限"
+            elif now >= self.ghold_release_at:
+                reason = "緑が通過し切った"
+            else:
+                self._press(*self.content_to_screen(*CIRCLES[i]), "move")
+                self.last_input_ts = now
+                time.sleep(0.005)
+                return
+            self._press(*self.content_to_screen(*CIRCLES[i]), "up")
+            self.log(f"ホールド解除 円{i}（{held:.2f}s, {reason}）")
+            self.note_last_tap[i] = now
+            self.last_input_ts = now
+            self.hold_idx = None
+            self.ghold_release_at = None
+            self.green_since[i] = None   # 終端の緑で即座に再ホールドしないため明示的に消す
+            time.sleep(0.02)
+            return
+
         # 2p) --predict の緑ホールド継続中: ETA予測時刻まで保持。輝度には依存しない
         #     （旧 --holds がタップ波紋と交絡した失敗要因を回避）。move で genuine 入力維持。
         #     hold_release_at の有無で predict 開始のホールドだけを扱う（--holds 併用時、
@@ -1004,6 +1112,24 @@ class AutoLive:
             if self.predict and self.forecast is not None:
                 e = self.forecast.consume(i, now)
                 ntype = e["type"] if e else None
+            if self.green_hold and self.green_since[i] is not None:
+                # 緑がいま approach に居る＝この発火は緑ノーツの頭。押しっぱなしにする。
+                # **飛行時間はこのホールド自身で実測する**（定数を持たない）。緑が approach に
+                # 現れてから円で発火するまでの差が、そのまま approach→円 の飛行時間。
+                # 機種・ウィンドウ寸法・レーン距離の差（実測 1.34 倍）を自動で吸収する。
+                self.ghold_transit = max(0.05, now - self.green_since[i])
+                self.ghold_release_at = now + self.ghold_transit
+                self._press(*self.content_to_screen(*CIRCLES[i]), "down")
+                self.hold_idx = i
+                self.hold_start = now
+                self.last_input_ts = now
+                if self.verbose:
+                    # ピークを出す。現在値は着弾直前に ROI を抜けかけて下がるため、
+                    # そのまま出すとしきい値割れに見えて誤解を招く。
+                    self.log(f"ホールド開始 円{i}（緑ピーク{self.green_peak[i]}px, "
+                             f"飛行{self.ghold_transit:.2f}s）")
+                tapped = True
+                break
             if self.predict and ntype == "green":
                 # 緑=次の緑まで長押し（§17.9）。解除は対の緑のETA（無ければ track の
                 # 精緻化を待ちつつ上限 HOLD_MAX_SEC）。
@@ -1827,6 +1953,11 @@ def main():
                          "誤反応しやすく既定では無効）")
     ap.add_argument("--flick", action="store_true",
                     help="赤ノーツでフリック（到達直前ROIで赤検出→タップ＋外向きスワイプ）。§17.9")
+    ap.add_argument("--green-hold", action="store_true",
+                    help="緑ノーツを長押し（approach点の緑画素数で開始・解除を判定）。"
+                         "**長押し中は他レーンを取れない**（カーソル1点のため）。既定OFF")
+    ap.add_argument("--hold-max-sec", type=float, default=HOLD_MAX_SEC,
+                    help=f"1ホールドの最大保持秒（既定 {HOLD_MAX_SEC}）。誤検出でも必ず離す上限")
     ap.add_argument("--predict", action="store_true",
                     help="track並走の種別先読みで緑ホールド/赤フリックを出し分け"
                          "（実験的・既定OFF。不調時は自動でタップに劣化）")
@@ -1847,7 +1978,9 @@ def main():
                       note_trigger=args.note_trigger, note_lead=args.note_lead,
                       note_roi=args.note_roi, holds=args.holds, engine=args.engine,
                       esc_enabled=not args.no_esc, flick=args.flick,
-                      predict=args.predict, auto_circles=args.auto_circles).run()
+                      predict=args.predict, auto_circles=args.auto_circles,
+                      green_hold=args.green_hold,
+                      hold_max_sec=args.hold_max_sec).run()
     # 安全停止は **人間の確認が必要** なので、supervisor に再起動させないよう
     # 専用の終了コードで抜ける（正常終了と区別できないと空転ループになる）。
     sys.exit(EXIT_SAFE_STOP if reason else EXIT_OK)

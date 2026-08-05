@@ -61,6 +61,7 @@ import Quartz
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 import driver  # noqa: E402
+import tap_jitter as tap_jitter_module  # noqa: E402
 
 # --- ライブ中の自動PAUSE対策（実機実験で確定。docs/device-findings.md） ---
 # iPhone ミラーリングは「genuine な HID 入力」が一定時間ないと iOS アプリをアイドル化し
@@ -205,6 +206,18 @@ HOLD_MAX_SEC = 8.0               # 1ホールドの最大保持秒（誤検出�
                                  # 実測した長さは 0.3〜0.5秒だが曲により長い可能性があるので広く取る。
                                  # --hold-max-sec で上書き可。
 HOLD_REL_FACTOR = 0.45           # 保持解除のしきい（trigger×これ を下回ったら離す＝ヒステリシス）
+
+# --- 打鍵の着弾点ジッター ---
+# 着弾点が毎回まったく同じ4点だと散らばりが厳密ゼロになり、統計的に人間と即座に区別できる。
+# リング内に収まる範囲で散らす。判定 ROI には一切影響を与えない（_circle_roi_px は素の
+# CIRCLES を使い続ける）。値はすべて円リング半径 R との比。R は端末で変わるので比で持つ。
+CIRCLE_R_FRAC = 0.05          # 円リング半径の目安（ウィンドウ幅相対）。
+                              # **note_engine.CIRCLE_R_FRAC と同一値に保つこと。**
+JITTER_BIAS_SIGMA_R = 0.10    # レーン別の恒常バイアス σ（≈2.6px@529w）。ライブごとに引き直す
+JITTER_TAP_SIGMA_R = 0.18     # タップごとのノイズ σ（≈4.8px@529w）
+JITTER_MAX_R = 0.60           # 合計オフセットの上限（≈15.9px@529w）。超えたら棄却して引き直す。
+                              # 0.45 では棄却が分布の裾を削りすぎ、実効 σ が seed 次第で
+                              # 0.82〜0.93 倍とばらついた（0.60 では 0.93〜0.99 倍）。
 # --- 実験的トラッキングエンジン(engine=track) ---
 TRACK_ARRIVE_PX = 34.0           # ノーツがレーン円のこのpx内に来たら打鍵
 TRACK_FORGET_SEC = 6.0           # acted集合を周期クリア（id枯渇/メモリ防止。ライブ跨ぎ）
@@ -513,7 +526,7 @@ class AutoLive:
                  note_lead=NOTE_ROI_LEAD, note_roi=NOTE_ROI_RADIUS, holds=False,
                  green_hold=False, hold_max_sec=HOLD_MAX_SEC,
                  engine="roi", esc_enabled=True, flick=False, predict=False,
-                 auto_circles=False):
+                 auto_circles=False, tap_jitter=True):
         self.max_loops = max_loops
         self.dry_run = dry_run
         self.verbose = verbose
@@ -588,6 +601,18 @@ class AutoLive:
         os.makedirs(self.dbg_dir, exist_ok=True)
         # (top,bottom) px。タイトルバー有り(38,h-9)を初期値とし、暗いゲーム画面で自己補正。
         self.content = (38, int(self.win["h"]) - 9)
+        # --- 打鍵の着弾点ジッター（--no-tap-jitter で無効化） ---
+        # 半径は円リング半径 R との比で持つ（端末差の吸収）。R は win 取得後にしか
+        # 決まらないので、ここで px へ換算して TapJitter に渡す。
+        self.jitter = None
+        if tap_jitter:
+            r_px = self.win["w"] * CIRCLE_R_FRAC
+            self.jitter = tap_jitter_module.TapJitter(
+                len(CIRCLES),
+                bias_sigma=r_px * JITTER_BIAS_SIGMA_R,
+                tap_sigma=r_px * JITTER_TAP_SIGMA_R,
+                max_r=r_px * JITTER_MAX_R)
+        self.hold_point = None   # ホールド中の着弾点（down で確定し move/up で使い回す）
 
     # --- 座標変換: 内容相対小数 -> 画面ポイント ---
     def content_to_screen(self, xf, yf):
@@ -791,6 +816,26 @@ class AutoLive:
             self._roi_scales = [d / mean if mean > 0 else 1.0 for d in dists]
             self._roi_scale_key = key
         return self._roi_scales[idx]
+
+    def _tap_point(self, idx):
+        """CIRCLES[idx] にジッターを乗せた content 相対座標を返す。
+
+        **CIRCLES は --auto-circles で in-place 更新されるため毎回読む（キャッシュ禁止）。**
+        x はウィンドウ幅、y は内容矩形高で正規化する（分母が違う）。px 空間で等方な
+        散らばりを作ってから変換しないと、着弾点が楕円状に歪む。
+
+        判定 ROI（_circle_roi_px）はこれを使わない。ジッターはクリック先だけの話。
+        """
+        xf, yf = CIRCLES[idx]
+        if self.jitter is None:
+            return xf, yf
+        top, bottom = self.content
+        w = self.win["w"]
+        ch = bottom - top
+        if w <= 0 or ch <= 0:
+            return xf, yf
+        dx, dy = self.jitter.offset_px(idx)
+        return xf + dx / w, yf + dy / ch
 
     def _circle_roi_px(self, idx):
         """円 idx の判定ROI（フレームpx）を返す: (x0, y0, x1, y1)。
@@ -1576,6 +1621,8 @@ class AutoLive:
                 now = time.time()
                 if self.gameplay_since is None:
                     self.gameplay_since = now
+                    if self.jitter is not None:
+                        self.jitter.begin_live()   # ライブごとに恒常バイアスを引き直す
                 # 円キャリブレーションは**成功するまでライブ中ずっと再試行**する。
                 # ライブ突入の1フレームだけで試すと、リザルト間の暗転など「リングが
                 # 描画されていない暗いフレーム」を掴んで検出0円で諦め、そのライブ全体を
@@ -1969,6 +2016,9 @@ def main():
                          "track=実験(スポーン検出+追跡)。既定 roi")
     ap.add_argument("--no-esc", action="store_true",
                     help="ESC キルスイッチを無効化（自律実行用。停止は pkill -f autolive.py）")
+    ap.add_argument("--no-tap-jitter", action="store_true",
+                    help="打鍵の着弾点ジッターを無効化（既定は有効）。"
+                         "従来どおり円中心ちょうどを叩く。A/B 比較用")
     args = ap.parse_args()
     if args.calibrate:
         calibrate()
@@ -1980,7 +2030,8 @@ def main():
                       esc_enabled=not args.no_esc, flick=args.flick,
                       predict=args.predict, auto_circles=args.auto_circles,
                       green_hold=args.green_hold,
-                      hold_max_sec=args.hold_max_sec).run()
+                      hold_max_sec=args.hold_max_sec,
+                      tap_jitter=not args.no_tap_jitter).run()
     # 安全停止は **人間の確認が必要** なので、supervisor に再起動させないよう
     # 専用の終了コードで抜ける（正常終了と区別できないと空転ループになる）。
     sys.exit(EXIT_SAFE_STOP if reason else EXIT_OK)

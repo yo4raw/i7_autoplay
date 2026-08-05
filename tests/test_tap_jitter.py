@@ -121,5 +121,72 @@ class TestTapJitter(unittest.TestCase):
             TapJitter(4, bias_sigma=1.0, tap_sigma=1.0, max_r=0.0)
 
 
+import autolive as AL  # noqa: E402
+
+
+class FakeJitter:
+    """固定オフセットを返すスタブ。座標変換だけを切り出して検証するために使う。"""
+
+    def __init__(self, dx, dy):
+        self.dx, self.dy = dx, dy
+
+    def begin_live(self):
+        pass
+
+    def offset_px(self, idx):
+        return self.dx, self.dy
+
+
+def make_al(circles, jitter, w=671, h=348):
+    """実機に触れずに AutoLive を組み立てる（tests/test_roi_scale.py と同じ手口）。"""
+    al = AL.AutoLive.__new__(AL.AutoLive)
+    al.win = {"x": 0, "y": 0, "w": w, "h": h}
+    al.content = (38, h - 9)
+    al.jitter = jitter
+    AL.CIRCLES[:] = circles
+    return al
+
+
+class TestTapPoint(unittest.TestCase):
+
+    DEFAULT_CIRCLES = [(0.16, 0.63), (0.33, 0.85), (0.68, 0.85), (0.84, 0.63)]
+
+    def tearDown(self):
+        AL.CIRCLES[:] = list(self.DEFAULT_CIRCLES)
+
+    def test_x_and_y_use_different_denominators(self):
+        """x はウィンドウ幅、y は内容矩形高で正規化する（分母の取り違え検出）。
+
+        671x348 では幅 671 に対し内容矩形高は 301。同じ分母を使うと落ちる。
+        """
+        al = make_al(list(self.DEFAULT_CIRCLES), FakeJitter(10.0, 20.0))
+        xf, yf = al._tap_point(0)
+        self.assertAlmostEqual(xf, 0.16 + 10.0 / 671, places=9)
+        self.assertAlmostEqual(yf, 0.63 + 20.0 / (348 - 9 - 38), places=9)
+
+    def test_follows_in_place_circles_update(self):
+        """--auto-circles による CIRCLES の in-place 更新に追従する。
+
+        座標をキャッシュすると、補正が効いた瞬間から古い点を叩き続ける。
+        """
+        al = make_al(list(self.DEFAULT_CIRCLES), FakeJitter(0.0, 0.0))
+        self.assertAlmostEqual(al._tap_point(0)[0], 0.16, places=9)
+        AL.CIRCLES[:] = [(0.25, 0.70), (0.33, 0.85), (0.68, 0.85), (0.84, 0.63)]
+        self.assertAlmostEqual(al._tap_point(0)[0], 0.25, places=9)
+
+    def test_disabled_returns_exact_circle(self):
+        """jitter=None なら素の CIRCLES[idx] と完全一致する。"""
+        al = make_al(list(self.DEFAULT_CIRCLES), None)
+        for idx in range(4):
+            self.assertEqual(al._tap_point(idx), AL.CIRCLES[idx])
+
+    def test_degenerate_window_falls_back_to_exact_circle(self):
+        """ウィンドウ寸法が壊れているときは素の座標を返す（ゼロ除算を起こさない）。"""
+        al = make_al(list(self.DEFAULT_CIRCLES), FakeJitter(10.0, 20.0))
+        al.win = {"x": 0, "y": 0, "w": 0, "h": 0}
+        al.content = (38, 38)
+        self.assertEqual(al._tap_point(0), AL.CIRCLES[0])
+
+
 if __name__ == "__main__":
     unittest.main()

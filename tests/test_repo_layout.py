@@ -14,7 +14,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOLS = os.path.join(ROOT, "tools")
 
-PROD = ["autolive.py", "driver.py", "note_engine.py"]
+PROD = ["autolive.py", "driver.py", "note_engine.py", "tap_jitter.py"]
 OPS = ["supervise_autolive.sh", "freeze_sentinel.sh", "morning_watcher.sh",
        "pause_guard.sh", "reconnect_watcher.py", "recover_freeze.py",
        "unlock_watcher.py", "corpus_collector.py", "result_log.py",

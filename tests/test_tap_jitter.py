@@ -188,5 +188,52 @@ class TestTapPoint(unittest.TestCase):
         self.assertEqual(al._tap_point(0), AL.CIRCLES[0])
 
 
+class TestTapSites(unittest.TestCase):
+    """打鍵地点が _tap_point() を経由していることをソース上で固定する。
+
+    実機なしでは実際のクリック座標を観測できないため、**素の CIRCLES を
+    content_to_screen / click_content に直接渡している箇所が残っていないこと**を
+    ソースコードに対して検査する。差し戻しの検出が目的。
+    """
+
+    def setUp(self):
+        path = os.path.join(os.path.dirname(__file__), "..", "tools", "autolive.py")
+        with open(path, encoding="utf-8") as f:
+            self.src = f.read()
+
+    def test_no_raw_circles_in_click_content(self):
+        """通常タップが素の円中心を叩いていない。"""
+        self.assertNotIn("self.click_content(*CIRCLES[", self.src)
+
+    def test_no_raw_circles_in_content_to_screen(self):
+        """フリック開始点とホールド down が素の円中心を使っていない。"""
+        self.assertNotIn("self.content_to_screen(*CIRCLES[", self.src)
+
+    def test_keepalive_and_rotate_use_tap_point(self):
+        """キープアライブと rotate が素の円中心を叩いていない。
+
+        この2箇所は `cx, cy = CIRCLES[self.circle_i % len(CIRCLES)]` という別の
+        書き方をしているので、上の2テストでは捕まらない。
+        """
+        self.assertNotIn("CIRCLES[self.circle_i", self.src)
+        self.assertEqual(self.src.count("self.click_content(*self._tap_point(idx))"), 2)
+
+    def test_roi_still_uses_raw_circles(self):
+        """判定 ROI は素の CIRCLES を使い続ける（ジッターを混ぜない）。"""
+        self.assertIn("xf, yf = CIRCLES[idx]", self.src)
+
+    def test_hold_uses_stored_point_for_move_and_up(self):
+        """ホールドは down で決めた点を move/up で使い回す（毎回引き直さない）。
+
+        move が 3 箇所、up が 3 箇所。合計 6 箇所すべてが _hold_pt() 経由になる。
+        """
+        self.assertEqual(
+            self.src.count('self._press(*self.content_to_screen(*self._hold_pt(i)), "move")'), 3)
+        self.assertEqual(
+            self.src.count('self._press(*self.content_to_screen(*self._hold_pt(i)), "up")'), 3)
+        self.assertEqual(
+            self.src.count("self.hold_point = self._tap_point(i)"), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -837,6 +837,15 @@ class AutoLive:
         dx, dy = self.jitter.offset_px(idx)
         return xf + dx / w, yf + dy / ch
 
+    def _hold_pt(self, idx):
+        """ホールド中の着弾点。down で確定した点を move/up で使い回す。
+
+        毎回引き直すと指が微動することになる。ホールドは実機挙動が繊細な領域
+        （緑ノーツ対応は実測 3.3% で既定 OFF のまま打ち切られている）なので変えない。
+        hold_point が無い場合（ありえないが防御的に）は素の円中心へ落とす。
+        """
+        return self.hold_point if self.hold_point is not None else CIRCLES[idx]
+
     def _circle_roi_px(self, idx):
         """円 idx の判定ROI（フレームpx）を返す: (x0, y0, x1, y1)。
         円中心を ARC_CENTER 方向へ note_lead ぶん寄せて早撃ち補正する。"""
@@ -910,7 +919,7 @@ class AutoLive:
 
     def _flick(self, idx):
         """円 idx で フリック: 押下→外向き(中心と反対)へドラッグ→離す。種別=赤ノーツ用。"""
-        sx, sy = self.content_to_screen(*CIRCLES[idx])
+        sx, sy = self.content_to_screen(*self._tap_point(idx))
         # 外向き方向（ARC_CENTER から円へ向かうベクトル）
         cxs, cys = self.content_to_screen(*ARC_CENTER)
         dx, dy = sx - cxs, sy - cys
@@ -1087,15 +1096,16 @@ class AutoLive:
             elif now >= self.ghold_release_at:
                 reason = "緑が通過し切った"
             else:
-                self._press(*self.content_to_screen(*CIRCLES[i]), "move")
+                self._press(*self.content_to_screen(*self._hold_pt(i)), "move")
                 self.last_input_ts = now
                 time.sleep(0.005)
                 return
-            self._press(*self.content_to_screen(*CIRCLES[i]), "up")
+            self._press(*self.content_to_screen(*self._hold_pt(i)), "up")
             self.log(f"ホールド解除 円{i}（{held:.2f}s, {reason}）")
             self.note_last_tap[i] = now
             self.last_input_ts = now
             self.hold_idx = None
+            self.hold_point = None
             self.ghold_release_at = None
             self.green_since[i] = None   # 終端の緑で即座に再ホールドしないため明示的に消す
             time.sleep(0.02)
@@ -1111,16 +1121,17 @@ class AutoLive:
             if nxt is not None:  # 対の緑のETAが精緻化されたら解除時刻を追従
                 self.hold_release_at = min(nxt, self.hold_start + HOLD_MAX_SEC)
             if now < self.hold_release_at and (now - self.hold_start) < HOLD_MAX_SEC:
-                self._press(*self.content_to_screen(*CIRCLES[i]), "move")
+                self._press(*self.content_to_screen(*self._hold_pt(i)), "move")
                 self.last_input_ts = now
                 time.sleep(0.005)
                 return
-            self._press(*self.content_to_screen(*CIRCLES[i]), "up")
+            self._press(*self.content_to_screen(*self._hold_pt(i)), "up")
             if self.verbose:
                 self.log(f"ホールド解除 円{i}（{now - self.hold_start:.2f}s, ETA駆動）")
             self.note_last_tap[i] = now
             self.last_input_ts = now
             self.hold_idx = None
+            self.hold_point = None
             self.hold_release_at = None
             time.sleep(0.02)
             return
@@ -1132,16 +1143,17 @@ class AutoLive:
             base = self.note_baseline[i] or 0.0
             still = (wf[i] - base) > self.note_trigger * HOLD_REL_FACTOR
             if still and (now - self.hold_start) < HOLD_MAX_SEC:
-                self._press(*self.content_to_screen(*CIRCLES[i]), "move")
+                self._press(*self.content_to_screen(*self._hold_pt(i)), "move")
                 self.last_input_ts = now
                 time.sleep(0.005)
                 return
-            self._press(*self.content_to_screen(*CIRCLES[i]), "up")
+            self._press(*self.content_to_screen(*self._hold_pt(i)), "up")
             if self.verbose:
                 self.log(f"長押し解除 円{i}（{now - self.hold_start:.2f}s）")
             self.note_last_tap[i] = now
             self.last_input_ts = now
             self.hold_idx = None
+            self.hold_point = None
             self.note_hi_frames[i] = 0
             time.sleep(0.02)
             return
@@ -1164,7 +1176,8 @@ class AutoLive:
                 # 機種・ウィンドウ寸法・レーン距離の差（実測 1.34 倍）を自動で吸収する。
                 self.ghold_transit = max(0.05, now - self.green_since[i])
                 self.ghold_release_at = now + self.ghold_transit
-                self._press(*self.content_to_screen(*CIRCLES[i]), "down")
+                self.hold_point = self._tap_point(i)
+                self._press(*self.content_to_screen(*self.hold_point), "down")
                 self.hold_idx = i
                 self.hold_start = now
                 self.last_input_ts = now
@@ -1181,7 +1194,8 @@ class AutoLive:
                 nxt = self.forecast.next_eta_at(i, now, ntype="green")
                 self.hold_release_at = min(nxt, now + HOLD_MAX_SEC) if nxt \
                     else now + HOLD_MAX_SEC
-                self._press(*self.content_to_screen(*CIRCLES[i]), "down")
+                self.hold_point = self._tap_point(i)
+                self._press(*self.content_to_screen(*self.hold_point), "down")
                 self.hold_idx = i
                 self.hold_start = now
                 self.last_input_ts = now
@@ -1190,7 +1204,8 @@ class AutoLive:
                 tapped = True
                 break
             if self.holds and self.note_hi_frames[i] >= HOLD_SUSTAIN_FRAMES:
-                self._press(*self.content_to_screen(*CIRCLES[i]), "down")  # 離さず保持開始
+                self.hold_point = self._tap_point(i)
+                self._press(*self.content_to_screen(*self.hold_point), "down")  # 離さず保持開始
                 self.hold_idx = i
                 self.hold_start = now
                 self.last_input_ts = now
@@ -1204,7 +1219,7 @@ class AutoLive:
                 if self.verbose:
                     self.log(f"フリック 円{i}（赤検出）")
             else:
-                self.click_content(*CIRCLES[i])  # 通常タップ（down+up）
+                self.click_content(*self._tap_point(i))  # 通常タップ（down+up）
             self.note_last_tap[i] = now
             self.last_input_ts = now
             self.tap_count += 1
@@ -1259,9 +1274,9 @@ class AutoLive:
         """ノーツ無し区間でも genuine 入力を絶やさず PAUSE を防ぐ。
         rotate と同じ実証済み経路（click_content）で害のない円を1回タップする。"""
         if now - self.last_input_ts >= KEEPALIVE_GAP_SEC:
-            cx, cy = CIRCLES[self.circle_i % len(CIRCLES)]
+            idx = self.circle_i % len(CIRCLES)
             self.circle_i += 1
-            self.click_content(cx, cy)
+            self.click_content(*self._tap_point(idx))
             self.last_input_ts = now
 
     def _mirror_is_front(self):
@@ -1651,9 +1666,9 @@ class AutoLive:
                     self._gameplay_track(frame, now)
                 elif self.tap_mode == "rotate":
                     # フォールバック: 5円を約50Hzで巡回連打。
-                    cx, cy = CIRCLES[self.circle_i % len(CIRCLES)]
+                    idx = self.circle_i % len(CIRCLES)
                     self.circle_i += 1
-                    self.click_content(cx, cy)
+                    self.click_content(*self._tap_point(idx))
                     self.last_input_ts = now
                     time.sleep(0.02)
                 else:

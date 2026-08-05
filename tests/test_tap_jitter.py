@@ -10,6 +10,7 @@ import random
 import statistics
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 from tap_jitter import TapJitter  # noqa: E402
@@ -109,6 +110,22 @@ class TestTapJitter(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             j.offset_px(0)
 
+    def test_offset_px_rejects_out_of_range_idx(self):
+        """idx が n_lanes 以上なら IndexError。素通しすると bare IndexError で分かりにくい。"""
+        j = make(n_lanes=4)
+        j.begin_live()
+        with self.assertRaises(IndexError):
+            j.offset_px(4)
+
+    def test_offset_px_rejects_negative_idx(self):
+        """負の idx は Python のリスト添字規則で別レーンのバイアスへ静かに折り返るため、
+        明示的に弾く（現状の呼び出し元は range(len(CIRCLES)) しか渡さないので未到達だが、
+        将来 idx % n が負になりうる呼び出しが増えても事故らないようにする）。"""
+        j = make(n_lanes=4)
+        j.begin_live()
+        with self.assertRaises(IndexError):
+            j.offset_px(-1)
+
     def test_invalid_params_raise(self):
         """不正なパラメータは ValueError。"""
         with self.assertRaises(ValueError):
@@ -186,6 +203,88 @@ class TestTapPoint(unittest.TestCase):
         al.win = {"x": 0, "y": 0, "w": 0, "h": 0}
         al.content = (38, 38)
         self.assertEqual(al._tap_point(0), AL.CIRCLES[0])
+
+
+class TestJitterWindowResize(unittest.TestCase):
+    """Finding 1 の回帰: ウィンドウリサイズ後もジッター半径が新しい幅に追従すること。
+
+    self.jitter は __init__ 時点の win["w"] から px 換算して固定される。
+    _refresh_window() は content・ROIスケール・円キャリブレーションは作り直すのに
+    ジッターだけ古い px のまま残すと、リサイズ後は意図した比率からずれた散らばりに
+    なる（671w→529w への縮小で、意図した 0.60R が実質 0.76R 相当まで膨らむ、という
+    のが実測されたシナリオ）。
+    """
+
+    def make_al(self, w, h):
+        al = AL.AutoLive.__new__(AL.AutoLive)
+        al.win = {"x": 0, "y": 0, "w": w, "h": h}
+        al.content = (38, h - 9)
+        al._last_win_check = 0.0
+        al._roi_scale_key = None
+        al.circles_calibrated = True
+        al.autocal_samples = [(0.1, 0.1)]
+        al.jitter = al._build_jitter()
+        al.jitter.begin_live()
+        al.t_start = 0.0
+        al.loops_done = 0
+        al.max_loops = 1
+        return al
+
+    def test_resize_rebuilds_jitter_to_new_max_r(self):
+        """横向きのまま寸法が変わったら max_r が新しい幅基準に更新される。"""
+        al = self.make_al(671, 348)
+        expected_max_r = 529 * AL.CIRCLE_R_FRAC * AL.JITTER_MAX_R
+        self.assertNotAlmostEqual(al.jitter.max_r, expected_max_r)  # 前提: 実際に変わる幅で検証
+        with mock.patch.object(AL.driver, "find_window",
+                               return_value={"x": 0, "y": 0, "w": 529, "h": 334}):
+            al._refresh_window(interval=0.0)
+        self.assertAlmostEqual(al.jitter.max_r, expected_max_r, places=6)
+
+    def test_resize_rebuilt_jitter_survives_next_tap(self):
+        """resize がライブ中に起きても次の offset_px() が RuntimeError にならない。
+
+        gameplay_since は resize では None→now に遷移しないため begin_live() は
+        再呼出しされない。作り直し側が begin_live() を呼んでおく必要がある。
+        """
+        al = self.make_al(671, 348)
+        with mock.patch.object(AL.driver, "find_window",
+                               return_value={"x": 0, "y": 0, "w": 529, "h": 334}):
+            al._refresh_window(interval=0.0)
+        try:
+            al.jitter.offset_px(0)
+        except RuntimeError:
+            self.fail("resize 後の jitter が begin_live() 未実施のままだった")
+
+    def test_disconnect_resize_does_not_rebuild_jitter(self):
+        """縦長（切断とみなす）resize では他の派生状態と同様、ジッターも作り直さない。"""
+        al = self.make_al(671, 348)
+        old_jitter = al.jitter
+        with mock.patch.object(AL.driver, "find_window",
+                               return_value={"x": 0, "y": 0, "w": 318, "h": 701}):
+            al._refresh_window(interval=0.0)
+        self.assertIs(al.jitter, old_jitter)
+
+    def test_disabled_jitter_stays_disabled_across_resize(self):
+        """--no-tap-jitter (self.jitter=None) は横向き resize でも None のまま。"""
+        al = self.make_al(671, 348)
+        al.jitter = None
+        with mock.patch.object(AL.driver, "find_window",
+                               return_value={"x": 0, "y": 0, "w": 529, "h": 334}):
+            al._refresh_window(interval=0.0)
+        self.assertIsNone(al.jitter)
+
+
+class TestCircleRFracInSync(unittest.TestCase):
+    """Finding 4: autolive.CIRCLE_R_FRAC と note_engine.CIRCLE_R_FRAC の同値を固定する。
+
+    ジッター半径は autolive 側の CIRCLE_R_FRAC から px 換算するが、円の検出半径は
+    note_engine 側の同名定数を使う。「同一値に保つこと」というコメントだけでは
+    どちらか一方だけ変更するリファクタで簡単に崩れるため、テストで縛る。
+    """
+
+    def test_circle_r_frac_matches_note_engine(self):
+        import note_engine
+        self.assertEqual(AL.CIRCLE_R_FRAC, note_engine.CIRCLE_R_FRAC)
 
 
 class TestTapSites(unittest.TestCase):

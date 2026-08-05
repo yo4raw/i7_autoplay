@@ -606,12 +606,7 @@ class AutoLive:
         # 決まらないので、ここで px へ換算して TapJitter に渡す。
         self.jitter = None
         if tap_jitter:
-            r_px = self.win["w"] * CIRCLE_R_FRAC
-            self.jitter = tap_jitter_module.TapJitter(
-                len(CIRCLES),
-                bias_sigma=r_px * JITTER_BIAS_SIGMA_R,
-                tap_sigma=r_px * JITTER_TAP_SIGMA_R,
-                max_r=r_px * JITTER_MAX_R)
+            self.jitter = self._build_jitter()
         self.hold_point = None   # ホールド中の着弾点（down で確定し move/up で使い回す）
 
     # --- 座標変換: 内容相対小数 -> 画面ポイント ---
@@ -816,6 +811,22 @@ class AutoLive:
             self._roi_scales = [d / mean if mean > 0 else 1.0 for d in dists]
             self._roi_scale_key = key
         return self._roi_scales[idx]
+
+    def _build_jitter(self, win_w=None):
+        """CIRCLE_R_FRAC 系の比率定数から、現在のウィンドウ幅で TapJitter を1つ組み立てる。
+
+        半径は円リング半径 R（ウィンドウ幅相対）との比で持つため、ウィンドウ幅が
+        変わるたび（_refresh_window 参照）作り直す必要がある。win_w を省略すると
+        self.win["w"] を使うが、_refresh_window は self.win をまだ新しい寸法に
+        更新する前にこれを呼ぶ必要があるため、新しい幅を明示的に渡せるようにしてある。
+        """
+        w = win_w if win_w is not None else self.win["w"]
+        r_px = w * CIRCLE_R_FRAC
+        return tap_jitter_module.TapJitter(
+            len(CIRCLES),
+            bias_sigma=r_px * JITTER_BIAS_SIGMA_R,
+            tap_sigma=r_px * JITTER_TAP_SIGMA_R,
+            max_r=r_px * JITTER_MAX_R)
 
     def _tap_point(self, idx):
         """CIRCLES[idx] にジッターを乗せた content 相対座標を返す。
@@ -1297,8 +1308,8 @@ class AutoLive:
         掴んで「未知画面」で安全停止する（実測 2026-08-01: ミラーリングアプリの
         再起動でウィンドウが 671x348 → 318x701 に変わり、空転を繰り返した）。
 
-        寸法が変わったら content 矩形と円キャリブレーションのキャッシュも作り直す
-        （どちらもウィンドウ寸法に依存するため）。
+        寸法が変わったら content 矩形・円キャリブレーションのキャッシュ・ジッター半径
+        （px 換算値）も作り直す（いずれもウィンドウ寸法に依存するため）。
         """
         now = time.time()
         if now - self._last_win_check < interval:
@@ -1323,6 +1334,15 @@ class AutoLive:
                 self._roi_scale_key = None      # ROI スケールを再計算させる
                 self.circles_calibrated = False  # 別レイアウトなので円を取り直す
                 self.autocal_samples = []
+                if self.jitter is not None:
+                    # ジッターの半径も win["w"] 基準の比率換算なので、寸法が変わったら
+                    # 古い px のまま（0.76R相当に膨らむ等）にならないよう作り直す。
+                    # self.win はまだ更新前なので、新しい幅は win["w"] を明示的に渡す。
+                    self.jitter = self._build_jitter(win_w=win["w"])
+                    # 新インスタンスは begin_live() 未実施で offset_px() が RuntimeError に
+                    # なる。gameplay_since は resize では None→now に遷移しない（ライブ中
+                    # resize では begin_live() が再呼出しされない）ため、ここで明示的に呼ぶ。
+                    self.jitter.begin_live()
         self.win = win
 
     def bgr(self, frame_rgb):

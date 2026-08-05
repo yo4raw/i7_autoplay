@@ -32,6 +32,7 @@ def make_al(win):
     al._roi_scales = [1.0, 1.0, 1.0, 1.0]
     al.circles_calibrated = True
     al.autocal_samples = [(0.1, 0.1)]
+    al.jitter = None   # --no-tap-jitter 相当。ジッター再構築の経路は test_tap_jitter.py 側で検証
     al.t_start = 0.0
     al.loops_done = 0
     al.max_loops = 1

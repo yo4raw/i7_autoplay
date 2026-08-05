@@ -66,6 +66,9 @@ class TapJitter:
         合計ベクトルが max_r を超えたら**引き直す**（切り詰めない。理由はモジュール
         docstring）。バイアスが max_r/2 に制限されているので必ず有限回で採用される。
         """
+        if not 0 <= idx < self.n_lanes:
+            raise IndexError(
+                f"idx は 0..{self.n_lanes - 1} の範囲である必要がある: {idx}")
         if self._bias is None:
             raise RuntimeError("begin_live() を呼ぶ前に offset_px() が呼ばれた")
         bx, by = self._bias[idx]

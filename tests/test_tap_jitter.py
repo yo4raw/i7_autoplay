@@ -219,8 +219,15 @@ class TestTapSites(unittest.TestCase):
         self.assertEqual(self.src.count("self.click_content(*self._tap_point(idx))"), 2)
 
     def test_roi_still_uses_raw_circles(self):
-        """判定 ROI は素の CIRCLES を使い続ける（ジッターを混ぜない）。"""
-        self.assertIn("xf, yf = CIRCLES[idx]", self.src)
+        """判定 ROI は素の CIRCLES を使い続ける（ジッターを混ぜない）。
+
+        4 箇所ちょうど: _tap_point 自身の読み出し、_circle_roi_px（判定ROI）、
+        _approach_red/_approach_green（検色ROI）。assertIn だと1件残るだけで
+        パスしてしまい、残り3件のどれかが誤って書き換えられても検出できない
+        （例えば _approach_red がジッター混じりに変わっても気づけない）ため、
+        件数で固定する。
+        """
+        self.assertEqual(self.src.count("xf, yf = CIRCLES[idx]"), 4)
 
     def test_hold_uses_stored_point_for_move_and_up(self):
         """ホールドは down で決めた点を move/up で使い回す（毎回引き直さない）。
@@ -233,6 +240,17 @@ class TestTapSites(unittest.TestCase):
             self.src.count('self._press(*self.content_to_screen(*self._hold_pt(i)), "up")'), 3)
         self.assertEqual(
             self.src.count("self.hold_point = self._tap_point(i)"), 3)
+
+    def test_hold_point_cleared_on_release(self):
+        """hold_point は解除のたびにクリアされる（次のホールドへ持ち越さない）。
+
+        4 箇所ちょうど: __init__ の初期化（Task 2 で追加済み）+ 3 つの解除サイト
+        （緑ホールド／predict緑ホールド／輝度長押しの各解除ブロック）。解除サイトの
+        どれか1つでもクリアを落とすリファクタが入ると、古い着弾点が次のホールドへ
+        漏れてしまう。move/up の呼び出し回数だけを見る既存テストではこの欠落を
+        検出できないため、クリア自体の件数を別途固定する。
+        """
+        self.assertEqual(self.src.count("self.hold_point = None"), 4)
 
 
 if __name__ == "__main__":

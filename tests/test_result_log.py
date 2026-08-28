@@ -42,22 +42,60 @@ class TestScoreScreenDetection(unittest.TestCase):
                 self.assertLess(s, RL.PERFECT_THRESH, f"{name} を誤認 ({s:.3f})")
 
 
-class TestPickScoreFrame(unittest.TestCase):
-    def test_picks_the_last_score_frame(self):
-        """スコア画面が複数あれば最後（カウントアップ確定後）を選ぶこと。"""
-        good = load("score_result_671x348.png")
-        other = load("exp_result_671x348.png")
-        picked = RL.pick_score_frame([other, good, good, other])
-        self.assertIsNotNone(picked)
-        self.assertGreaterEqual(RL.score_screen_score(picked), RL.PERFECT_THRESH)
+class TestScoreTracker(unittest.TestCase):
+    """取得方式の回帰（2026-08-06）。
 
-    def test_returns_none_without_score_frame(self):
-        """スコア画面が無いバーストでは保存を見送ること（誤データを貯めない）。"""
-        other = load("exp_result_671x348.png")
-        self.assertIsNone(RL.pick_score_frame([other, other]))
+    旧実装は「リザルトを検出してから 0.35s×8 のバースト撮影」で、LIFE不足ダイアログが
+    絡む周回では 12ライブ中8件を取り逃がした。取りこぼしが**非ランダム**（遷移がもたつく
+    ＝成績の悪いライブほど落ちる）なため、効果判定の分布を実力より綺麗に見せてしまう。
+    現行は「見えている間追跡し、消えた直後に最後の1枚を確定」する。
+    """
 
-    def test_empty_burst_is_safe(self):
-        self.assertIsNone(RL.pick_score_frame([]))
+    def setUp(self):
+        self.good = load("score_result_671x348.png")
+        self.other = load("exp_result_671x348.png")
+        self.hi = RL.PERFECT_THRESH + 0.1
+        self.lo = RL.PERFECT_THRESH - 0.1
+
+    def test_saves_last_visible_frame_after_it_disappears(self):
+        """カウントアップ確定後（＝最後に見えた1枚）を、消えた後に確定すること。"""
+        t = RL.ScoreTracker()
+        self.assertIsNone(t.feed(self.good, self.hi, 0.0))
+        last = self.good.copy()
+        self.assertIsNone(t.feed(last, self.hi, 0.5))   # 見えている間は出さない
+        self.assertIsNone(t.feed(self.other, self.lo, 0.8))  # 消えた直後はまだ待つ
+        out = t.feed(self.other, self.lo, 2.0)          # GONE_SEC 経過で確定
+        self.assertIsNotNone(out)
+        np.testing.assert_array_equal(out, last)
+
+    def test_never_saves_without_a_score_screen(self):
+        """スコア画面を一度も見ていなければ保存しない（誤データを貯めない）。"""
+        t = RL.ScoreTracker()
+        for i in range(20):
+            self.assertIsNone(t.feed(self.other, self.lo, i * 0.3))
+
+    def test_cooldown_suppresses_flicker_double_save(self):
+        """一瞬の途切れで二重保存しないこと。"""
+        t = RL.ScoreTracker()
+        t.feed(self.good, self.hi, 0.0)
+        self.assertIsNotNone(t.feed(self.other, self.lo, 2.0))
+        t.feed(self.good, self.hi, 3.0)
+        self.assertIsNone(t.feed(self.other, self.lo, 5.0))   # cooldown 内なので捨てる
+
+    def test_two_separate_results_are_both_saved(self):
+        """クールダウンを越えた別のリザルトは両方保存すること。"""
+        t = RL.ScoreTracker()
+        t.feed(self.good, self.hi, 0.0)
+        self.assertIsNotNone(t.feed(self.other, self.lo, 2.0))
+        t.feed(self.good, self.hi, 100.0)
+        self.assertIsNotNone(t.feed(self.other, self.lo, 102.0))
+
+    def test_brief_gap_while_visible_does_not_split(self):
+        """演出中の一瞬の非マッチでは確定しない（GONE_SEC 未満）。"""
+        t = RL.ScoreTracker()
+        t.feed(self.good, self.hi, 0.0)
+        self.assertIsNone(t.feed(self.other, self.lo, 0.4))
+        self.assertIsNone(t.feed(self.good, self.hi, 0.7))
 
 
 if __name__ == "__main__":

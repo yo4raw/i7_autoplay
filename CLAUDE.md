@@ -76,7 +76,8 @@ pip install pyobjc-framework-Quartz pyobjc-framework-Cocoa opencv-python mss num
 
 # 無人周回の標準手順（ゲームを「イベント楽曲の楽曲選択画面」にしてから実行）
 # run_until.sh が最上位。切断中は待機し、復帰したら自動再開する
-nohup tools/ops/run_until.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &
+tools/ops/run_until.sh          # 引数なし＝対話。起動前チェック表示・多重起動を拒否・裏へ回る
+nohup tools/ops/run_until.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &   # 引数あり＝従来どおり
 # 起動前の確認項目とログの見かたは docs/README.md「周回開始コマンド」
 
 # 単発（ゲームをイベントライブ開始済み or 楽曲選択画面にしてから実行）

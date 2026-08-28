@@ -12,6 +12,7 @@ macOS の iPhone ミラーリング越しに IDOLiSH7 の累計イベントラ�
 | [`screen-flow.md`](screen-flow.md) | **画面遷移仕様**。認識する画面の一覧・判定順（順序が仕様）・各画面での操作・安全停止の条件・未対応画面の直し方 | 実装から機械的に抽出。テストで整合を検査 |
 | [`architecture.md`](architecture.md) | 2層構成・FSM・座標系・テンプレート管理 | 実機確認済み |
 | [`device-findings.md`](device-findings.md) | 実機知見。PAUSE 調査史・ノーツ仕様・端末非依存 | 実機確認済み。**変更前に必読** |
+| [`pause-causes.md`](pause-causes.md) | **PAUSE 画面になる原因だけ**の早見表。症状は同じで原因が5つあり対処が正反対になるため、識別表で原因を先に確定する | 実機確認済み。PAUSE が出たら最初に見る |
 | [`navigation.md`](navigation.md) | イベント導線・実測座標・LIFE 回復 | 実機確認済み。座標はイベントごとに変わりうる |
 | [`operations.md`](operations.md) | 無人運用・停止条件・復旧・トラブルシューティング | 実機確認済み |
 | [`superpowers/`](superpowers/) | 設計書（specs）と実装計画（plans） | 時点の記録 |
@@ -46,18 +47,25 @@ python -u tools/ops/corpus_collector.py 1800    # 30分ぶん採取
 
 ## 周回開始コマンド（楽曲選択画面から）
 
-**ゲームを「イベント楽曲の楽曲選択画面」にしてから、次の1行を実行する。**
+**ゲームを「イベント楽曲の楽曲選択画面」にしてから実行する。**
+
+推奨は**引数なしの対話モード**。起動前チェックを表示し、実行時間と楽曲の扱いを
+選ばせ、確認のうえで自分自身をバックグラウンドへ回す。**多重起動も検出して拒否する**
+（2プロセスが同じ画面を叩き合う事故の防止）。
 
 ```bash
-nohup tools/ops/run_until.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &
+tools/ops/run_until.sh
 ```
 
-引数は**終了する UNIX 時刻**。上の例は「今から2時間」。時刻で指定するなら:
+自動化から呼ぶときは従来どおり**終了する UNIX 時刻**を引数で渡す（対話は起きない）:
 
 ```bash
-# 今日の 23:45 まで
+nohup tools/ops/run_until.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &   # 今から2時間
 nohup tools/ops/run_until.sh $(date -j -f '%H:%M:%S' '23:45:00' +%s) > /dev/null 2>&1 &
 ```
+
+> `nohup ... &` で**引数なし**は使えない。対話モードは端末からの入力が要るので、
+> stdin が無いと usage を出して落ちる（黙ってハングしない）。
 
 `run_until.sh` が最上位。ミラーリング切断中は supervisor を回さずに待ち、復帰したら
 自動で再開する。`supervise_autolive.sh` を直接叩いてもよいが、切断すると
@@ -202,3 +210,4 @@ AUTO 周回作業を、macOS の **iPhone ミラーリング** 経由で自動�
 | 0.14 | 2026-07-10 | **ハイブリッド打鍵方式を実装（[device-findings.md](device-findings.md)「ハイブリッド打鍵方式（2026-07-10 実装・実機検証待ち）」）**。`--predict`=track種別先読み（緑ホールドはETA駆動解除・赤フリック・不調時タップ劣化）、`--auto-circles`=円自動キャリブレーション（4円全一致時のみ置換・失敗時再試行）。note_engine に TypeForecast/detect_circles/match_circles/`circles`CLI を追加、LANES を補正後円座標に同期し lanes をパラメータ化。unittest スイート新設（合成フレーム・実機不要）。両フラグ既定OFFで無回帰 |
 | 0.15 | 2026-07-30 | **ドキュメントを実態中心に再編**（specification.md 1,056行を README/setup/architecture/device-findings/navigation/operations へ分割、未実装の当初設計は archive/original-design.md へ、本体は案内スタブ化）。tools/ を本番3・ops8・probes12 に3分類。未追跡20ファイルを取り込み、実フレームコーパスは .gitignore。回帰テスト2本を新設。**新知見**: 再接続後のPAUSE再燃を再現し iohid_click も無効と確定（40秒で8回）、イベント「BUDDY Night NARRATIVE」の導線座標、難易度タブのLIFE表示はブースト3倍込みの実消費値 |
 | 0.16 | 2026-08-02 | **docs/ を12→7ファイルに整理**（3,180→約1,500行）。重複した `screen-transitions.md`（`screen-flow.md` と重複）、事実と食い違う `note-engine-dev.md`、転送スタブ `specification.md`、未実装の `archive/original-design.md`、対応済みレビュー `improvements.md` を削除。**「実機を動かす際の確認項目」は [operations.md](operations.md) へ救出**。`tools/autolive.py` のコメント6箇所とテストの背景記述を実在するドキュメントへ張り替えた。削除内容は git 履歴から復元可能（`git show 6d6e34b:docs/improvements.md`）|
+| 0.17 | 2026-08-06 | **実機A/Bで打鍵フラグ3件に決着（[device-findings.md](device-findings.md)「実機A/B: ジッター採用・緑ホールド却下・predict 却下」）**。リザルト成績を数値で転記して比較した。**着弾点ジッター=採用（既定ON維持・悪化指標ゼロ）**、**`--green-hold`=採用し supervisor 既定へ投入**（best を前後に挟む交互測定で MISS 中央値 5→4・SCORE +4.5%、MISS≤4 達成率 best 0/37 vs green 24/27）、**`--predict`=却下**（MISS 5.1→55.9）。**`result_log.py` の取得方式のバグを修正**（バースト撮影は12ライブ中8件を取り逃がし、しかも遷移がもたつく＝成績の悪いライブほど落ちる**非ランダムな欠測**で、緑ホールドの採否を一度誤らせた。追跡方式へ変更し ScoreTracker をテスト可能に切り出し）。autolive にライブ品質の自己診断を追加（打鍵<330 で大量MISS、>600 で2ライブ連結を警告）。run_until.sh が **Mac ロックを切断と区別**するようにした（従来は誤った復旧方法を案内して直らない状態を待ち続けていた）|

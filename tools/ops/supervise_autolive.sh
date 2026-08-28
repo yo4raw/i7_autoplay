@@ -7,15 +7,24 @@ cd "$(dirname "$0")/../.."
 source .venv/bin/activate
 
 TARGET="${1:?usage: supervise_autolive.sh <target_epoch>}"
-LOG="/tmp/i7_autorun.log"
-SUPLOG="/tmp/i7_supervisor.log"
+# パスは環境変数で差し替え可能にする（テストが本番のログを汚さないため。run_until.sh と同じ方針）。
+LOG="${I7_AUTORUN_LOG:-/tmp/i7_autorun.log}"
+SUPLOG="${I7_SUPERVISOR_LOG:-/tmp/i7_supervisor.log}"
 # 打鍵オプション。実機検証で確定した値を既定にする（2026-07-31）:
 #   --auto-circles : 機種差の円ズレを自動補正。これが無いと MISS 51・グレードB になる
 #                    （補正値は .autocal_circles.json にキャッシュされ再起動時に即復元）
 #   （--note-lead は指定しない: 打鍵ループ高速化で最適値が変わったため autolive の既定に従う）
 #   --flick        : 赤ノーツのフリック（既存）
+#   --green-hold   : 緑ノーツの長押し。2026-08-06 の実機A/Bで投入条件を満たした
+#                    （best を前後に挟む交互測定で MISS 中央値 5→4・SCORE +4.5%。
+#                     MISS<=4 の達成率は best 0/37 に対し green 24/27）。
+#                    詳細: docs/device-findings.md「実機A/B: ジッター採用・緑ホールド…」
 # 上書きしたいときは I7_TAP_OPTS 環境変数で丸ごと差し替える。
-TAP_OPTS="${I7_TAP_OPTS:---flick --auto-circles --note-lead 0.02}"
+# **打鍵オプションの既定値はここが真実の情報源。** 上位（run_until.sh の対話モード）が
+# `--keep-selection` 等を足したいだけのときに既定を書き写すと、片方だけ古くなって
+# 静かに食い違う。そのため「丸ごと差し替え = I7_TAP_OPTS」と「既定に追記 = I7_TAP_EXTRA」を
+# 分けている。回帰テストは tests/test_run_until.sh の supervise_autolive.sh 節。
+TAP_OPTS="${I7_TAP_OPTS:---flick --auto-circles --note-lead 0.02 --green-hold} ${I7_TAP_EXTRA:-}"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$SUPLOG"; }
 

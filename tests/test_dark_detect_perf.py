@@ -73,5 +73,53 @@ class TestPauseSearchBox(unittest.TestCase):
         self.assertGreater(y1, 0.42)   # 実測 y 上限 0.358 に対し余裕
 
 
+@unittest.skipUnless(os.path.isdir(os.path.join(CORPUS, "songselect")),
+                     "実フレームコーパスなし（任意）")
+class TestSongselectSearchBox(unittest.TestCase):
+    """楽曲選択(NEXT)の照合を範囲限定にした件の回帰テスト。
+
+    2026-08-28: `songselect` を `cardx` より前へ移した（区切り線の誤検出対策）ところ、
+    **明るいフレームごとに全画面マルチスケール照合(238ms)が1回増え**、1周あたりの
+    判定時間が 24s → 41s に伸びた。NEXT の位置はコーパス35枚すべてで
+    x 0.782..0.853 / y 0.841..0.913 と安定しているので、PAUSE と同じく範囲を絞れる
+    （実測 238ms → 24ms）。速くなっても**取りこぼさない**ことが要件。
+    """
+
+    def setUp(self):
+        self.imgs, self.thr = AL.load_templates()["songselect"]
+
+    def test_all_songselect_frames_still_detected(self):
+        """範囲を絞っても楽曲選択を1枚も取りこぼさないこと。
+
+        取りこぼすと NEXT を押せず、連戦後に周回が再開しない。
+        """
+        files = sorted(glob.glob(os.path.join(CORPUS, "songselect", "*.png")))
+        self.assertGreater(len(files), 0)
+        missed = []
+        for p in files:
+            score, _ = AL.match_in_box(_load_bgr(p), self.imgs, AL.SONGSELECT_SEARCH_BOX)
+            if score < self.thr:
+                missed.append(os.path.basename(p))
+        self.assertEqual([], missed, f"楽曲選択を取りこぼした: {missed}")
+
+    def test_event_songselect_frame_still_detected(self):
+        """cardx 誤検出の原因になったイベント楽曲リストでも取りこぼさないこと。"""
+        p = os.path.join(os.path.dirname(__file__), "frames",
+                         "songselect_event_671x348.png")
+        score, _ = AL.match_in_box(_load_bgr(p), self.imgs, AL.SONGSELECT_SEARCH_BOX)
+        self.assertGreaterEqual(score, self.thr, f"イベント楽曲選択を取りこぼした ({score:.3f})")
+
+    def test_no_false_positive_on_other_screens(self):
+        """楽曲選択でない画面で誤検出しないこと（誤って NEXT を押すと制御を失う）。"""
+        hits = []
+        for d in ("gameplay", "formation", "friendselect", "result", "cardx"):
+            for p in sorted(glob.glob(os.path.join(CORPUS, d, "*.png")))[:10]:
+                score, _ = AL.match_in_box(_load_bgr(p), self.imgs,
+                                           AL.SONGSELECT_SEARCH_BOX)
+                if score >= self.thr:
+                    hits.append(f"{d}/{os.path.basename(p)}={score:.3f}")
+        self.assertEqual([], hits, f"楽曲選択でない画面で誤検出: {hits}")
+
+
 if __name__ == "__main__":
     unittest.main()

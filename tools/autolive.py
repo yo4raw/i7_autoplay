@@ -109,15 +109,24 @@ P_STORY_NO = (0.39, 0.752)       # 「ストーリーに遷移しますか？」
 P_START = (0.785, 0.888)         # 編成画面の「START」ボタン中心（窓相対・実測。右の MENU と混同しない）
 # 楽曲選択画面の難易度タブ（左から EASY/NORMAL/HARD/EXPERT, LIFE 15/30/45/60）。
 # **ユーザー要件: 必ず EASY で周回する**。NEXT を押す前に EASY(緑・最左)タブをタップして固定。
+# ただし `--keep-selection` を付けた回は**このタブを一切タップしない**（累計イベント以外の
+# 例外運用。人が EXPERT 等を選んでいるのを黙って EASY に戻さないため）。
 P_EASY_TAB = (0.644, 0.718)      # EASY タブ中心（窓相対・実測。緑タブ「EASY✦ LIFE 15」）
 # 未知の明るい画面で“やむを得ず”触る安全位置（最下端マージン）。ダイアログのボタン帯
 # (y≈0.74-0.88) や本文・×を避けるため、ボタンが置かれない最下端だけを軽く叩く。
 P_MENU_SAFE = (0.50, 0.97)
 # カード型ポップアップ（報酬獲得/アイテム獲得/RANK UP 等）を閉じる位置。これらは**×でなく
 # 背景（暗転部）のどこをタップしても閉じる**（実機確認。×自体のクリックでは閉じない）。
-# 中央のカードを外した位置を叩くが、**左下はカーソルがDock/ホットコーナー付近へワープして
-# 危険**なため（ユーザー指摘）、カード外の**右上の暗い背景**を叩いて閉じる（端末非依存）。
-P_CARD_DISMISS = (0.86, 0.16)
+# 中央のカードを外した位置を叩く。制約は2つ:
+#   - **左下は不可**（カーソルが Dock／ホットコーナー付近へワープして危険。ユーザー指摘）
+#   - **右上も不可**（2026-08-29 ユーザー指摘）。右上には BACK (約 0.906,0.185) と
+#     **ステラ所持数の「＋」＝課金導線 (約 0.872,0.135)** が並ぶ。旧値 (0.86,0.16) は
+#     671x348 で (577,56) となり、「＋」の実測 (585,47) と **x で 8px・y で 9px** しか
+#     離れていなかった。カードを閉じるたびに課金導線の隣を叩いていたことになる。
+# よって横位置はそのまま（中央のカードの外側）に、**縦だけ上部バーの帯より下げる**。
+# カードは画面中央に出るので、縦を下げても「背景を叩く」性質は変わらない。
+# 回帰テストは tests/test_card_dismiss_safety.py。
+P_CARD_DISMISS = (0.86, 0.50)
 
 # --- 端末非依存のクリック（中央アンカー方式） ---
 # ダイアログ/ポップアップは画面中央に同pxサイズで出る（端末間でUIは同サイズ・実測で確認）。
@@ -206,6 +215,15 @@ HOLD_MAX_SEC = 8.0               # 1ホールドの最大保持秒（誤検出�
                                  # 実測した長さは 0.3〜0.5秒だが曲により長い可能性があるので広く取る。
                                  # --hold-max-sec で上書き可。
 HOLD_REL_FACTOR = 0.45           # 保持解除のしきい（trigger×これ を下回ったら離す＝ヒステリシス）
+
+# --- ライブ品質の自己診断（2026-08-06 実測）---
+# 通常は 184ノーツに対し **約370打鍵（ノーツあたり約2打鍵）/ 判定約4550フレーム**。
+# 異常ライブでは打鍵が落ち、**打鍵不足 ÷ 2 が MISS の超過とほぼ一致する**
+# （打鍵236→MISS 69 / 打鍵212→MISS 76 に対し、正常は打鍵約370→MISS 4〜8）。
+# supervisor は「クリアしたか」しか見ないので、ここで警告を出さないと成績が半分でも
+# 気づかずに回り続ける。詳細は docs/device-findings.md「実機A/B」。
+TAPS_LOW = 330      # これ未満＝打鍵していない区間があった（大量 MISS）
+TAPS_DOUBLE = 600   # これ超＝リザルト見逃しで2ライブぶんを1クリアとして走った
 
 # --- 打鍵の着弾点ジッター ---
 # 着弾点が毎回まったく同じ4点だと散らばりが厳密ゼロになり、統計的に人間と即座に区別できる。
@@ -297,6 +315,7 @@ TEMPLATES = {
     "resumelive": ("resume_live.png", 0.85),
     # 周回対象曲「Don't Analyze Me」の一覧行（ユーザー指定: 効率が良いので毎回これを選ぶ）。
     # 選択中は緑ハイライト、未選択は暗背景で見た目が変わるため variant を併用する。
+    # `--keep-selection` の回は参照されない。
     "songdaz": ("song_dontanalyze.png", 0.85),
     # ゲーム側のデータ更新でタイトルへ戻される。シアン系ヘッダを持つため cardx と
     # 誤認され、背景タップでは閉じられず停滞→安全停止していた（実測 2026-08-02、100周目）。
@@ -358,7 +377,21 @@ P_LIFE_CONFIRM_X = (0.78, 0.41)    # 「ライフをN回復しました」確認
 MAX_LIFE_RECOVERS = 6              # 連続でこの回数 LIFE 不足が続いたら（=きなこパン枯渇）停止
 # テンプレ照合のスケール候補。端末でUIサイズはほぼ同じ(≈1.0で一致)だが、機種差に備え
 # ±20%程度を見て数点を試す（タイトルバー有無の0.86も維持）。
-SCALES = [0.8, 0.86, 0.93, 1.0, 1.08, 1.18]
+# テンプレ照合のスケール段数。**1段増えるごとに全画面照合が1回増える**ので、明るい画面の
+# 判定コストにほぼ比例して効く（実測 2026-08-29: 6段 2264ms/フレーム）。
+#
+# **コーパス309枚（テンプレで判定できる全フレーム。529x334 と 671x348 の両方）を総当たりして
+# 求めた最小構成が [0.8, 0.93, 1.0, 1.08]。** 0.86 と 1.18 は、それでしか当たらないフレームが
+# 1枚も無い。閾値割れは 0/309 件で、余裕が最小のケース（closex, +0.002）は 6段でも 4段でも
+# スコアが同一＝削った段に依存していない。
+#
+# **削りすぎは即座に周回を殺す。** 一度 [0.93, 1.0, 1.08] まで削ったところ、**PAUSE を
+# 37枚中7枚取りこぼした**（0.8 でしか当たらないフレームが3枚ある）。PAUSE を見逃すと
+# ライブが止まったまま復帰できない。**少数のフレームを見て決めてはいけない**（この誤りは
+# 各ディレクトリ2枚だけ見て起きた）。
+# 歯止め: tests/test_dark_detect_perf.py（PAUSE の取りこぼし）と
+#         tests/test_corpus_smoke.py::TestCorpusStatesUnchanged（実フレームの判定固定）。
+SCALES = [0.8, 0.93, 1.0, 1.08]
 # 明るさ閾値: これ未満ならライブ中（暗い画面）
 DARK_THRESH = 65.0
 # 暗い画面（gameplay/PAUSE）では、重い pause/songselect テンプレ照合を毎フレームせず
@@ -368,6 +401,12 @@ DARK_RECHECK_SEC = 0.7
 # ライブ中の PAUSE 見出しの出現範囲（実測: コーパス37枚すべてで x≈0.50, y=0.27〜0.36）。
 # 余裕を持たせても全画面の 1/4 以下で済み、照合コストが大幅に下がる。
 PAUSE_SEARCH_BOX = (0.25, 0.10, 0.75, 0.55)
+# 楽曲選択の NEXT ボタンの出現範囲（実測: コーパス34枚＋イベント楽曲1枚のすべてで
+# x=0.782〜0.853, y=0.841〜0.913）。**明るい側の判定順で songselect を cardx より前に
+# 置いた**（区切り線の cardx 誤検出対策）ため、この照合は明るいフレームごとに走る。
+# 全画面マルチスケールのままだと 238ms/回かかり、1周の判定時間が 24s → 41s に伸びた
+# （2026-08-28 実測）。範囲を絞ると 24ms/回になる。
+SONGSELECT_SEARCH_BOX = (0.58, 0.68, 1.0, 1.0)
 # 未知の明るいダイアログにこの秒数留まったら、ステラ誤使用を避けて停止する。
 # （LIFE 回復ダイアログ等の未知画面でボタンを盲目クリックしないための安全装置）
 STUCK_STOP_SEC = 25.0
@@ -411,6 +450,52 @@ def match_best(frame_bgr, imgs):
         if score > best[0]:
             best = (score, pos)
     return best
+
+
+# きなこパン行の「回復」ボタンの縦許容（フレーム高に対する比）。
+# ステラストーン行のボタンは実測で 0.26h ぶん離れているので、十分な余裕を持って分離できる。
+RECOVER_ROW_TOL_FRAC = 0.13
+
+
+def kinako_recover_point(frame_rgb, row_pos):
+    """きなこパン行の「回復」ボタン中心 (x, y) をピンク色で直接探して返す。
+
+    **必ず「きなこパン行が実在する」確認を通した後に呼ぶこと。**
+    この関数は枯渇を判定しない（枯渇の判定は `kinakorow` の照合が担う）。
+
+    固定オフセット方式（`ANCH_KINAKO_ROW`）はラベルのマッチ中心が基準なので、
+    ラベルに接頭辞が付くと着弾点がそのぶん横へずれる。実機 2026-08-28、イベント配布の
+    **「11周年きなこパン」**（所持154個）で着弾が x=443 となりボタン右端(441)を 2px 外し、
+    6回連続で空振り → `life_short_persist` で停止した。**ボタンの位置自体は接頭辞の
+    有無で変わらない**（両フレームとも x=386..441, y=164..185）ので、ボタンを直接
+    見つけるほうが文言に依存しない。
+
+    候補は「きなこパン行と同じ高さ・ラベルより右にある横長のピンク矩形」に限る。
+    見つからなければ従来の固定オフセットへフォールバックする（行の実在は確認済みなので、
+    フォールバック先も必ずきなこパン行の中に収まり、ステラ行には届かない）。
+    """
+    h, w = frame_rgb.shape[:2]
+    R = frame_rgb[:, :, 0].astype(int)
+    G = frame_rgb[:, :, 1].astype(int)
+    B = frame_rgb[:, :, 2].astype(int)
+    pink = ((R > 200) & (G > 90) & (G < 175) & (B > 130) & (B < 200)
+            & (R - G > 60)).astype(np.uint8)
+    n, _lbl, stats, _cent = cv2.connectedComponentsWithStats(pink, 8)
+    tol = RECOVER_ROW_TOL_FRAC * h
+    best = None
+    for i in range(1, n):
+        x, y, bw, bh, area = stats[i]
+        if area < 0.0015 * w * h or bw <= bh:      # 横長のボタンだけ
+            continue
+        cx, cy = x + bw / 2.0, y + bh / 2.0
+        if cx <= row_pos[0] or abs(cy - row_pos[1]) > tol:   # 同じ行・ラベルより右
+            continue
+        d = abs(cy - row_pos[1])
+        if best is None or d < best[0]:
+            best = (d, (cx, cy))
+    if best is not None:
+        return best[1]
+    return (row_pos[0] + ANCH_KINAKO_ROW[0], row_pos[1] + ANCH_KINAKO_ROW[1])
 
 
 def detect_card_x(frame_rgb):
@@ -526,11 +611,14 @@ class AutoLive:
                  note_lead=NOTE_ROI_LEAD, note_roi=NOTE_ROI_RADIUS, holds=False,
                  green_hold=False, hold_max_sec=HOLD_MAX_SEC,
                  engine="roi", esc_enabled=True, flick=False, predict=False,
-                 auto_circles=False, tap_jitter=True):
+                 auto_circles=False, tap_jitter=True, keep_selection=False):
         self.max_loops = max_loops
         self.dry_run = dry_run
         self.verbose = verbose
         self.max_seconds = max_seconds
+        # 楽曲選択で曲・難易度を選び直さない（累計イベント以外の例外運用）。
+        # 既定 False = 従来どおり「Don't Analyze Me」+ EASY を固定する。
+        self.keep_selection = keep_selection
         self.tap_mode = tap_mode
         self.note_trigger = note_trigger
         self.note_lead = note_lead
@@ -1290,6 +1378,16 @@ class AutoLive:
             self.click_content(*self._tap_point(idx))
             self.last_input_ts = now
 
+    def _front_name(self):
+        """最前面アプリ名。PAUSE 原因 C（フォーカス奪取）と D（病気セッション）の
+        切り分けはこの1語で決まる。詳細は docs/pause-causes.md「1. 原因の識別表」。"""
+        try:
+            from AppKit import NSWorkspace
+            a = NSWorkspace.sharedWorkspace().frontmostApplication()
+            return (a.localizedName() or "?") if a else "?"
+        except Exception:
+            return "?"
+
     def _mirror_is_front(self):
         """iPhoneミラーリングが最前面か。NSWorkspace の frontmostApplication で判定。"""
         try:
@@ -1505,6 +1603,18 @@ class AutoLive:
         # （端末非依存）。専用ダイアログ判定の後・result の前（Result の上に重なって出るため）。
         # getattr: detect() は result_log 等の外部ツールからも __new__ 生成の
         # インスタンスで呼ばれるため、属性が無くても動くようにする。
+        # 連戦（連続ライブ再プレイ）が終わると楽曲選択画面に戻る。そこから自動で再開する。
+        # **cardx より先。** イベント楽曲リスト上部の薄い水色の区切り線（高さ2px・
+        # RGB(157,196,218)）が detect_card_x の「シアン帯」条件を満たすため cardx と
+        # 誤検出され、背景タップでは閉じられず 28 秒で安全停止していた（2026-08-28 実機）。
+        # formation と同じ理屈で、モーダルが被っていれば NEXT は隠れて閾値に届かない。
+        # **範囲限定で照合する。** 明るいフレームごとに走るので、全画面照合(238ms)のままだと
+        # メニュー遷移が目に見えて遅くなる（SONGSELECT_SEARCH_BOX 参照）。
+        _ss_imgs, _ss_thr = self.templates["songselect"]
+        _ss_score, _ss_pos = match_in_box(frame_bgr(), _ss_imgs, SONGSELECT_SEARCH_BOX)
+        res["songselect"] = (_ss_score, _ss_thr, _ss_pos)
+        if _ss_score >= _ss_thr:
+            return "songselect", res
         # per-song Result の EXP 画面はカードの緑ヘッダを持つため cardx と誤検出される。
         # 背景タップでは閉じず停滞→安全停止するので、色検出より先に確定させる。
         if m("expresult"):
@@ -1521,9 +1631,6 @@ class AutoLive:
             return "eventresult", res
         if m("result"):
             return "result", res
-        # 連戦（連続ライブ再プレイ）が終わると楽曲選択画面に戻る。そこから自動で再開する。
-        if m("songselect"):
-            return "songselect", res
         if m("friendselect"):
             return "friendselect", res
         if m("formation"):
@@ -1611,7 +1718,13 @@ class AutoLive:
                 # 注意: pause_resume.png は「PAUSE」見出し文字に一致する。マッチ位置を
                 # クリックすると見出しを叩くだけで再開しない（旧バグ）。PAUSEメニューの
                 # 「再開」ボタンは右下の固定位置 P_RESUME にあるためそこをクリックする。
-                self.log("PAUSE → 再開")
+                # **PAUSE のたびに最前面アプリを残す。** これが無いと原因 C/D を
+                # 事後に切り分けられず、iPhone 再起動が要るのか運用の問題なのか判らない
+                # （実際に判別できず調査をやり直した。docs/pause-causes.md）。
+                fn = self._front_name()
+                lost = not (("Mirroring" in fn) or ("ミラーリング" in fn))
+                self.log(f"PAUSE → 再開 (front={fn})"
+                         + ("  <<< 最前面を奪われている（原因C）" if lost else ""))
                 self.click_anchor(res["pause"][2], ANCH_RESUME)
                 time.sleep(0.4)
             elif state == "battery":
@@ -1647,7 +1760,7 @@ class AutoLive:
                     break
                 self.log(f"LIFE不足 → きなこパンで回復（{self.life_recovers}回目, "
                          f"ステラ不使用・行確認 score={kscore:.2f}）")
-                self.click_anchor(kpos, ANCH_KINAKO_ROW)  # きなこパン行の「回復」
+                self.click_match(kinako_recover_point(frame, kpos))  # きなこパン行の「回復」
                 time.sleep(1.3)
                 self.click_center_off(OFF_LIFE_CONFIRM)  # 「N回復しました」確認の×（直後に出るためテンプレ無し→中央アンカー）
                 time.sleep(1.3)
@@ -1771,23 +1884,31 @@ class AutoLive:
                 self.click_anchor(res["rankup"][2], ANCH_RANKUP_X)
                 time.sleep(0.6)
             elif state == "songselect":
-                # 連戦が終わって楽曲選択へ戻った → **必ず EASY を選択** してから NEXT。
-                # （ユーザー要件: ノーマル等で周回しない。EASY タブを先にタップして固定する。）
-                # **ユーザー要件: 楽曲は変更しない**。曲リスト（左側）は絶対にタップせず、現在
-                # 選択中の曲のまま進める。ここで触るのは EASY タブ（右下・難易度）と NEXT のみ。
+                # 連戦が終わって楽曲選択へ戻った → 曲と難易度を確定してから NEXT。
                 # NEXTテンプレのマッチ位置を直接クリック（端末非依存）。次状態で再検出して進める。
-                # **ユーザー要件: 毎回「Don't Analyze Me」を選ぶ**（イベント効率が良い曲）。
-                # 一覧行をテンプレで探して当たればタップ。見つからなければ曲は変更しない
-                # （スクロール位置により画面外のことがあるため、無理に探し回らない＝安全側）。
-                sc, pos = match_best(self.bgr(frame), self.templates["songdaz"][0])
-                if pos is not None and sc >= TEMPLATES["songdaz"][1]:
-                    self.log(f"楽曲選択 → Don't Analyze Me を選択 (score={sc:.2f})")
-                    self.click_match(pos)
-                    time.sleep(0.5)
+                if self.keep_selection:
+                    # **例外イベント用（--keep-selection）**: 曲も難易度も選び直さない。
+                    # 累計イベント以外（ポイントミッション等）は対象曲も難易度も前提が違う。
+                    # ここで EASY 固定タップを走らせると、人が選んだ難易度を黙って EASY へ
+                    # 戻してしまう。選択状態はゲーム側が保持するので、触らないのが安全側。
+                    self.log("楽曲選択 → 曲・難易度は変更せず NEXT（--keep-selection）")
                 else:
-                    self.log(f"楽曲選択 → 対象曲が見つからず曲は変更しない (score={sc:.2f})")
-                self.click_window(*P_EASY_TAB)   # EASY タブを選択（難易度）
-                time.sleep(0.5)
+                    # **既定（累計イベント）: 必ず EASY を選択** してから NEXT。
+                    # （ユーザー要件: ノーマル等で周回しない。EASY タブを先にタップして固定する。）
+                    # **ユーザー要件: 楽曲は変更しない**。曲リスト（左側）は絶対にタップせず、現在
+                    # 選択中の曲のまま進める。ここで触るのは EASY タブ（右下・難易度）と NEXT のみ。
+                    # **ユーザー要件: 毎回「Don't Analyze Me」を選ぶ**（イベント効率が良い曲）。
+                    # 一覧行をテンプレで探して当たればタップ。見つからなければ曲は変更しない
+                    # （スクロール位置により画面外のことがあるため、無理に探し回らない＝安全側）。
+                    sc, pos = match_best(self.bgr(frame), self.templates["songdaz"][0])
+                    if pos is not None and sc >= TEMPLATES["songdaz"][1]:
+                        self.log(f"楽曲選択 → Don't Analyze Me を選択 (score={sc:.2f})")
+                        self.click_match(pos)
+                        time.sleep(0.5)
+                    else:
+                        self.log(f"楽曲選択 → 対象曲が見つからず曲は変更しない (score={sc:.2f})")
+                    self.click_window(*P_EASY_TAB)   # EASY タブを選択（難易度）
+                    time.sleep(0.5)
                 self.click_match(res["songselect"][2])
                 time.sleep(1.4)
             elif state == "friendselect":
@@ -1931,6 +2052,13 @@ class AutoLive:
                              f" 打鍵{self.tap_count}回 / 判定{self.frame_count}フレーム"
                              + (f" [取得{self._prof['grab']:.0f}s 判定{self._prof['detect']:.0f}s "
                                 f"打鍵{self._prof['act']:.0f}s]" if self.frame_count else ""))
+                    if self.tap_count > TAPS_DOUBLE:
+                        self.log(f"[warn] 打鍵{self.tap_count}回は通常の約2倍 →"
+                                 " リザルトを見逃して2ライブ連続で走った可能性")
+                    elif self.tap_count < TAPS_LOW:
+                        self.log(f"[warn] 打鍵{self.tap_count}回は通常(約370)より"
+                                 f"{370 - self.tap_count}回少ない →"
+                                 f" MISS が約{4 + (370 - self.tap_count) // 2}に増えている見込み")
                     self._prof = {"grab": 0.0, "detect": 0.0, "act": 0.0}
                     self.tap_count = 0
                     self.frame_count = 0
@@ -2054,6 +2182,9 @@ def main():
     ap.add_argument("--no-tap-jitter", action="store_true",
                     help="打鍵の着弾点ジッターを無効化（既定は有効）。"
                          "従来どおり円中心ちょうどを叩く。A/B 比較用")
+    ap.add_argument("--keep-selection", action="store_true",
+                    help="楽曲選択で曲も難易度も選び直さない（累計イベント以外の例外運用）。"
+                         "既定は Don't Analyze Me + EASY を固定する")
     args = ap.parse_args()
     if args.calibrate:
         calibrate()
@@ -2066,7 +2197,8 @@ def main():
                       predict=args.predict, auto_circles=args.auto_circles,
                       green_hold=args.green_hold,
                       hold_max_sec=args.hold_max_sec,
-                      tap_jitter=not args.no_tap_jitter).run()
+                      tap_jitter=not args.no_tap_jitter,
+                      keep_selection=args.keep_selection).run()
     # 安全停止は **人間の確認が必要** なので、supervisor に再起動させないよう
     # 専用の終了コードで抜ける（正常終了と区別できないと空転ループになる）。
     sys.exit(EXIT_SAFE_STOP if reason else EXIT_OK)

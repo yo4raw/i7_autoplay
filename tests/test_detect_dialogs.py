@@ -162,5 +162,21 @@ class TestResendResultDialog(unittest.TestCase):
         self.assertTrue(255 <= y <= 280, f"y={y} がボタンの外")
 
 
+class TestEventSongSelect(unittest.TestCase):
+    """イベント導線の楽曲選択画面を cardx と誤認しないこと。
+
+    2026-08-28 実機: Memorial Party のイベント楽曲リストで、上部の**薄い水色の区切り線**
+    （y≈0.16・高さ2px・RGB(157,196,218)）が detect_card_x の「シアン帯」条件を満たし、
+    cardx と誤判定された。背景タップでは当然閉じないので 2 秒おきに叩き続け、
+    28 秒で `cardx_stuck` 安全停止。NEXT を一度も押せず周回が始まらなかった。
+    """
+
+    def test_detected_as_songselect_not_cardx(self):
+        state, res = detect_file("songselect_event_671x348.png")
+        self.assertEqual("songselect", state,
+                         f"songselect と判定されるべきだが {state} だった")
+        self.assertGreaterEqual(res["songselect"][0], 0.85)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,15 +5,17 @@
 ```bash
 # 無人周回。楽曲選択画面から実行する（起動手順は README.md「周回開始コマンド」）
 # run_until.sh が最上位。切断中は待機し、supervisor は落ちた autolive を8秒後に再起動する
-nohup tools/ops/run_until.sh <target_epoch> > /dev/null 2>&1 &
+tools/ops/run_until.sh                                       # 対話（推奨）
+nohup tools/ops/run_until.sh <target_epoch> > /dev/null 2>&1 &   # 自動化から呼ぶとき
 
 # 成績を並走して蓄積（チューニングの効果判定に使う）
 nohup python -u tools/ops/result_log.py 7200 <tag> > /tmp/i7dbg/reslog.log 2>&1 &
 python tools/ops/result_log.py montage <tag>
 ```
 
-supervisor の打鍵オプションは `--flick --auto-circles`（`I7_TAP_OPTS` で差し替え可）。
-`--note-lead` は指定せず `autolive.py` の既定（0.02）に従う。
+supervisor の打鍵オプションは `--flick --auto-circles`（`I7_TAP_OPTS` で**丸ごと差し替え**、
+`I7_TAP_EXTRA` で**既定に追記**）。`--note-lead` は指定せず `autolive.py` の既定（0.02）に従う。
+対話モードは `I7_TAP_EXTRA` 側を使う（既定値の真実の情報源を supervisor 1箇所に保つため）。
 
 到達している水準（Don't Analyze Me / EASY+ / ブースト3倍）:
 
@@ -42,7 +44,7 @@ lead をさらに詰める余地がある。効果は1ライブでは誤差（±
 
 | # | 確認 | 方法 | 正常 | 異常なら |
 |---|---|---|---|---|
-| A-1 | **多重起動していない** | `ps -eo pid,command \| grep -vE "zsh -c\|grep" \| grep -E "run_until\|supervise_autolive\|tools/autolive"` | 0件 | 既存を停止してから開始（ops スクリプトに排他制御は無い） |
+| A-1 | **多重起動していない** | `ps -eo pid,command \| grep -vE "zsh -c\|grep" \| grep -E "run_until\|supervise_autolive\|tools/autolive"` | 0件 | **対話モードで起動すれば自動で検出して拒否する。** 引数付きで直接叩く場合は従来どおり目視（その経路に排他制御は無い） |
 | A-2 | ミラーリングが接続されている | `.venv/bin/python tools/driver.py info` | `w > h`（横向き。例 671x348） | 縦長なら切断中。iPhone をロックして再接続 |
 | A-3 | ミラーリングが最前面 | `osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'` | `iPhone Mirroring` | 他アプリの背後だと暗い画面を gameplay と誤認する |
 | A-4 | **オートライブ OFF** | 楽曲選択下部パネルを目視 | `ブースト 3倍 / オート OFF` | ON だと1ライブにつきブリンドリンク3個を消費（**大前提**） |

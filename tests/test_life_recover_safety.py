@@ -125,5 +125,53 @@ class TestClickTargetSafety(unittest.TestCase):
                          "ANCH_KINAKO（見出し基準）が残っている。枯渇時にステラを押す")
 
 
+class TestPrefixedKinakoRow(unittest.TestCase):
+    """ラベルに接頭辞が付いた行（「11周年きなこパン」）でも「回復」を押せること。
+
+    2026-08-28 実機: イベント配布の **11周年きなこパン**（所持154個）で LIFE 回復が
+    6回連続で空振りし、`life_short_persist` で安全停止した。ステラは押していないので
+    課金事故ではないが、周回は止まる。
+
+    原因は固定オフセット方式。`kinakorow` テンプレは「きなこパン」部分に一致するため、
+    「11周年」の接頭辞があるとマッチ中心が右へずれ、そのぶん着弾点も右へ動いて
+    ボタンの右端(x=441)を 2px 外していた（着弾 x=443）。
+    **「回復」ボタン自体は両フレームで同一位置** (x=386..441, y=164..185) にあるので、
+    ボタンを直接見つけて押せばラベルの文言に依存しなくなる。
+    """
+
+    # 実測（両フレームで同一）: きなこパン行の「回復」ボタン
+    KINAKO_BUTTON = (386, 164, 441, 185)
+    # 実測: ステラストーン行の「回復」ボタン。**ここに入ったら課金事故**
+    STELLA_BUTTON_671 = (386, 225, 441, 246)
+
+    def _point(self, name):
+        imgs, thr = AL.load_templates()["kinakorow"]
+        score, pos = AL.match_best(load(name), imgs)
+        self.assertGreaterEqual(score, thr, f"きなこパン行を見失った (score={score:.3f})")
+        return AL.kinako_recover_point(load_rgb(name), pos)
+
+    def test_lands_on_recover_button_with_prefixed_label(self):
+        x, y = self._point("lifeshort_kinako_11th_671x348.png")
+        x0, y0, x1, y1 = self.KINAKO_BUTTON
+        self.assertTrue(x0 <= x <= x1, f"x={x:.0f} が「回復」ボタン({x0}..{x1})の外")
+        self.assertTrue(y0 <= y <= y1, f"y={y:.0f} が「回復」ボタン({y0}..{y1})の外")
+
+    def test_lands_on_recover_button_without_prefix(self):
+        """接頭辞なしの既存フレームでも同じ関数で当たること（回帰）。"""
+        x, y = self._point(PRESENT)
+        x0, y0, x1, y1 = self.KINAKO_BUTTON
+        self.assertTrue(x0 <= x <= x1, f"x={x:.0f} が「回復」ボタンの外")
+        self.assertTrue(y0 <= y <= y1, f"y={y:.0f} が「回復」ボタンの外")
+
+    def test_never_lands_on_stella_row(self):
+        """どちらのフレームでも、ステラストーン行の「回復」には絶対に入らないこと。"""
+        for name in ("lifeshort_kinako_11th_671x348.png", PRESENT):
+            with self.subTest(frame=name):
+                _, y = self._point(name)
+                y0, y1 = self.STELLA_BUTTON_671[1], self.STELLA_BUTTON_671[3]
+                self.assertFalse(y0 <= y <= y1,
+                                 f"y={y:.0f} がステラ行のボタン({y0}..{y1})に入った")
+
+
 if __name__ == "__main__":
     unittest.main()

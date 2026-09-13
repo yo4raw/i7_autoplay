@@ -175,6 +175,22 @@ ANCH_NEWS_CLOSE = (207.5, 6.5)    # お知らせヘッダ「お知らせ」 → 
 ANCH_BREAK_NO = (-73.0, 100.0)    # 休憩時間の確認本文 → **いいえ**（はいは絶対に押さない）
 # 1回の実行で復帰を試みる上限。超えたら安全停止する（同じ所を延々回るのを防ぐ）。
 MAX_RECOVERS = 3
+# クリアを挟まずに編成画面の START を押せる回数。正常経路では START の後に必ずクリアが
+# 計上されるので、2 回目の START は「直前のライブが放棄された」ことを意味する。
+# 再接続病のセッションで START → PAUSE → 打鍵が「諦める」を踏む → 楽曲選択 → START が
+# 35 秒周期で 4 回続き、クリア 0・警告 0 で LIFE だけ減った（実測 2026-09-10）。
+MAX_STARTS_WITHOUT_CLEAR = 2
+# ホームの EVENT リボンをこの回数押しても画面が変わらなければ、下部ナビ LIVE → 通常楽曲選択 →
+# 左下のイベントバッジ → イベントトップ、で迂回する（2026-09-12 04:13 実機: リボンが 60 回無反応）。
+HOME_RIBBON_MAX_TAPS = 5
+# --max-seconds の上限に達してもライブ中は抜けない（その周回の LIFE が丸ごと無駄になる）。
+# リザルト以降の画面で抜ける。ただし上限をこの秒数以上超えたら（ライブ 1 本 ≈120 秒 + 余裕）諦めて抜ける。
+MAX_SECONDS_GRACE = 300.0
+# 時間上限で抜けてよい画面。リザルト系〜編成（START 前）まで。ライブ中はもちろん、START 直後や
+# LIFE 回復直後のローディング（判定は menu）でも抜けない。2026-09-12 05:56 実測: きなこパンで回復した
+# 直後のローディングで抜け、始まったライブが無人になった。
+SAFE_EXIT_STATES = ("result", "eventresult", "expresult", "cardx", "closex", "rankup",
+                    "friendreq", "replay", "songselect", "friendselect", "formation", "lifeshort")
 
 # ライブのタップ判定円（**4レーン**, 内容相対小数）。中央(0.49,0.93)はSCORE表示と重なる
 # ダミーで実在レーンではないため除外（無駄打ち＋SCOREアニメの誤検出を排除）。
@@ -367,6 +383,20 @@ TEMPLATES = {
     "eventtop": ("eventtop_songs.png", 0.85),  # イベントトップの「イベント楽曲」ボタン
     # 休憩時間中に「イベント楽曲」を押すと出る確認。**「はい」を押すと pt ゼロで LIFE を失う。**
     "breaktime": ("breaktime.png", 0.85),
+    # 04:00 リセット直後にホームで出る「LOGIN BONUS」（ログインボーナス／デイリーパス）。
+    # ヘッダがピンクで cardx の色検出に掛からず、未知画面で安全停止していた（2026-09-12 04:01）。
+    # 2 ページあり、どこをタップしても進む（下部に「TAP SCREEN」）。
+    "loginbonus": ("login_bonus.png", 0.85),
+    # イベント期間中の「特別ログインボーナス」（1日1回、きなこパン等）。ログインボーナスの後に出る。
+    # 下部の定型文「1日1回（最大7回まで）特別ログインボーナスをプレゼントいたします！」を目印にする
+    # （報酬カードや背景はイベントで変わる）。画面タップで進む。
+    "speciallogin": ("special_login.png", 0.85),
+    # 判定順には入れず、ハンドラ内でだけ使うテンプレ:
+    # 通常ライブの楽曲選択の左下に出るイベントバッジ（イベントごとに絵が変わるので variant で増やす）。
+    # **これが見えている楽曲選択は通常ライブなので NEXT を押さない**（絶対規則 3）。
+    "eventbadge": ("event_badge.png", 0.85),
+    # ホーム下部ナビの LIVE アイコン（イベント非依存）。EVENT リボンが無反応なときの迂回に使う。
+    "navlive": ("nav_live.png", 0.90),
 }                                              # ※低電力モードは絶対に押さない（閉じるのみ）
 
 # --- LIFE 回復（ユーザー要件: きなこパンで回復・ステラは絶対に使わない） ---
@@ -394,6 +424,25 @@ MAX_LIFE_RECOVERS = 6              # 連続でこの回数 LIFE 不足が続い�
 SCALES = [0.8, 0.93, 1.0, 1.08]
 # 明るさ閾値: これ未満ならライブ中（暗い画面）
 DARK_THRESH = 65.0
+# 明るさゲートの計測条件を固定するための「上端 38 行の置換値」。
+# DARK_THRESH とコーパス（507枚）は **macOS のタイトルバー付きウィンドウ**（上端 38 行の
+# 平均 209.7）で較正されている。現在のミラーリングウィンドウはタイトルバーが無く、上端は
+# 透過して**背後のウィンドウが写り込む**（実測 2026-09-11: 昨夜は暗いページで 28、今朝は白い
+# Chrome で 252）。写り込みで平均が ±20 動くと、暗いメニューが gameplay に落ちて盲目打鍵に
+# なったり（昨夜）、ライブ中の再照合コストが4倍になったり（今朝）する。上端 38 行を較正時と
+# 同じ値に置き換えて平均すれば、帯の中身に依存せず較正どおりの値になる。
+TITLEBAR_ROWS = 38
+TITLEBAR_EQUIV = 210.0
+# 薄暗いフレーム（DARK_THRESH 以上・これ未満）は、タップ円のリングが見えていれば gameplay とみなす。
+# ライブ中の内容輝度は曲・演出で動き、実測 2026-09-12 深夜の Dis one. は 35〜52（frame_brightness
+# 54〜70）で、約 5% のフレームが 65 を超えて明るい側の全段照合（2.9 秒・打鍵停止）に落ち、
+# gameplay の継続時間もリセットされてクリア計上が漏れた。リングは 4 円の固定位置に常に描かれる
+# 白い輪で、暗いメニュー・cardx・Result・PAUSE ではコントラスト 15 以下、ライブ中は 70〜100（実測）。
+# 上限 90: 明るい MV のライブフレームは実測で frame_brightness 73 まで上がる（2026-09-12 Dis one.）。
+# リングが 3 円見えることが条件なので、コーパスの非ライブ画面（n_ok 最大 2）には影響しない。
+DIM_THRESH = 90.0
+RING_CONTRAST_MIN = 40.0     # リング上の明るさ − 内側の明るさ（max(R,G,B)）
+RING_MIN_COUNT = 3           # 4 円中これ以上でリングが見えていれば「ライブ中」
 # 暗い画面（gameplay/PAUSE）では、重い pause/songselect テンプレ照合を毎フレームせず
 # この秒数おきに間引く。PAUSE・暗いsongselectはタイミング非依存なので数フレーム遅れて
 # 検出してよく、間引くぶんノーツ検出のサンプリングレートが上がり打鍵精度が向上する。
@@ -407,6 +456,11 @@ PAUSE_SEARCH_BOX = (0.25, 0.10, 0.75, 0.55)
 # 全画面マルチスケールのままだと 238ms/回かかり、1周の判定時間が 24s → 41s に伸びた
 # （2026-08-28 実測）。範囲を絞ると 24ms/回になる。
 SONGSELECT_SEARCH_BOX = (0.58, 0.68, 1.0, 1.0)
+# EVENT RESULT 見出し「-EVENT RESULT-」の出現範囲（実測: 529x334 で中心 (0.31,0.18)、
+# 671x348 で (0.32,0.21)）。暗い側の救済照合で毎 0.7 秒走るので範囲を絞る。
+EVENTRESULT_SEARCH_BOX = (0.05, 0.05, 0.60, 0.40)
+# 「本日の課題」見出しの出現範囲（実測: 529x334 で中心 (0.33,0.22)、671x348 で (0.36,0.21)）。
+DAILYTASK_SEARCH_BOX = (0.15, 0.08, 0.60, 0.40)
 # 未知の明るいダイアログにこの秒数留まったら、ステラ誤使用を避けて停止する。
 # （LIFE 回復ダイアログ等の未知画面でボタンを盲目クリックしないための安全装置）
 STUCK_STOP_SEC = 25.0
@@ -422,6 +476,18 @@ GAMEPLAY_TIMEOUT_SEC = 240.0
 # gameplay がこの秒数継続して初めて「ライブ中」とみなす（クリア二重計上防止）。
 # リザルト間の暗い遷移は数秒で終わるため、1ライブ(≈115s)未満の閾値にする。
 MIN_LIVE_SEC = 20.0
+
+
+def frame_brightness(frame_rgb):
+    """明るさゲート用の平均輝度。上端 TITLEBAR_ROWS 行を TITLEBAR_EQUIV に置き換えて平均する。
+
+    コーパスと DARK_THRESH の較正条件（タイトルバー付き、上端 38 行 ≈ 210）を再現し、
+    ウィンドウ上端の透過部に写り込む背後のウィンドウの明暗に左右されないようにする。
+    """
+    h = frame_rgb.shape[0]
+    top = min(TITLEBAR_ROWS, h)
+    body = float(frame_rgb[top:].mean()) if h > top else 0.0
+    return (body * (h - top) + TITLEBAR_EQUIV * top) / h
 
 
 def load_templates():
@@ -521,28 +587,6 @@ def detect_card_x(frame_rgb):
     return (int(cols.max() - 0.012 * w), int(y0 + 0.018 * h))
 
 
-def detect_content_rect(frame_rgb):
-    """ウィンドウ画像内の「ゲーム内容矩形」(top,bottom 行) を検出。
-
-    macOS のタイトルバー（明るい帯）を除外。ゲーム上下が暗いことを利用する。
-    戻り値: (top, bottom) ピクセル行。横は全幅とみなす。
-    """
-    H = frame_rgb.shape[0]
-    rb = frame_rgb.mean(axis=(1, 2))
-    top = 0
-    for y in range(H):
-        if rb[y] < 70:
-            top = y
-            break
-    bottom = H - 1
-    for y in range(H - 1, -1, -1):
-        if rb[y] < 70:
-            bottom = y
-            break
-    if bottom - top < H * 0.5:  # 検出失敗時は全体
-        return 0, H - 1
-    return top, bottom
-
 
 def match_multiscale(frame_bgr, templ):
     """マルチスケールでテンプレ照合。最大スコアと一致中心(ピクセル)を返す。"""
@@ -627,6 +671,9 @@ class AutoLive:
         self.win = driver.find_window()
         self.loops_done = 0
         self.was_in_live = False
+        self.starts_since_clear = 0     # クリアを挟まずに押した START の回数（ライブ放棄の検知）
+        self.home_taps = 0              # ホームで EVENT リボンを続けて押した回数（無反応の迂回判定）
+        self.last_start_ts = 0.0        # 直近の START 押下時刻（同じ画面での押し直しを数えないため）
         self.circle_i = 0
         self.closex_i = 0           # closex 候補位置の巡回インデックス
         self.life_recovers = 0      # 連続 LIFE 回復回数（きなこパン枯渇検知用）
@@ -687,8 +734,8 @@ class AutoLive:
         self._last_dark_check = 0.0  # 暗い画面で pause/songselect を最後に照合した時刻（間引き用）
         self.dbg_dir = "/tmp/i7dbg"
         os.makedirs(self.dbg_dir, exist_ok=True)
-        # (top,bottom) px。タイトルバー有り(38,h-9)を初期値とし、暗いゲーム画面で自己補正。
-        self.content = (38, int(self.win["h"]) - 9)
+        # (top,bottom) px。**固定** (TITLEBAR_ROWS, h-9)。円の較正キャッシュ・OFF_* と同じ基準。
+        self.content = (TITLEBAR_ROWS, int(self.win["h"]) - 9)
         # --- 打鍵の着弾点ジッター（--no-tap-jitter で無効化） ---
         # 半径は円リング半径 R との比で持つ（端末差の吸収）。R は win 取得後にしか
         # 決まらないので、ここで px へ換算して TapJitter に渡す。
@@ -1427,7 +1474,7 @@ class AutoLive:
                      f"{int(self.win['w'])}x{int(self.win['h'])} → "
                      f"{int(win['w'])}x{int(win['h'])}"
                      + ("（切断とみなし補正は維持）" if disconnected else " → 座標系を作り直す"))
-            self.content = (38, int(win["h"]) - 9)
+            self.content = (TITLEBAR_ROWS, int(win["h"]) - 9)
             if not disconnected:
                 self._roi_scale_key = None      # ROI スケールを再計算させる
                 self.circles_calibrated = False  # 別レイアウトなので円を取り直す
@@ -1442,6 +1489,39 @@ class AutoLive:
                     # resize では begin_live() が再呼出しされない）ため、ここで明示的に呼ぶ。
                     self.jitter.begin_live()
         self.win = win
+
+    def _rings_visible(self, frame_rgb):
+        """タップ円のリングが RING_MIN_COUNT 個以上見えているか（薄暗いフレームのライブ判定）。
+
+        各円について、半径 0.78〜0.92R の円周上 36 点の max(R,G,B) 平均と、半径 0.45R の
+        内側 36 点の平均との差をコントラストとする。CIRCLES は較正後の値を使うので、
+        未較正の端末ではリングを外して False になり、従来どおり明るい側の照合へ落ちる。
+        """
+        # getattr: detect() は result_log 等の外部ツールからも __new__ 生成のインスタンスで
+        # 呼ばれる。内容矩形が無ければリング判定はせず、従来どおり明るい側へ落とす。
+        content = getattr(self, "content", None)
+        if content is None:
+            return False
+        h, w = frame_rgb.shape[:2]
+        top, bottom = content
+        ch = bottom - top
+        r = CIRCLE_R_FRAC * w
+        V = frame_rgb.max(axis=2)
+        ang = np.linspace(0.0, 2.0 * np.pi, 36, endpoint=False)
+        cos, sin = np.cos(ang), np.sin(ang)
+
+        def samp(cx, cy, rad):
+            xs = np.clip(np.rint(cx + rad * cos).astype(int), 0, w - 1)
+            ys = np.clip(np.rint(cy + rad * sin).astype(int), 0, h - 1)
+            return float(V[ys, xs].mean())
+
+        n = 0
+        for xf, yf in CIRCLES:
+            cx, cy = w * xf, top + yf * ch
+            ring = max(samp(cx, cy, r * k) for k in (0.78, 0.85, 0.92))
+            if ring - samp(cx, cy, r * 0.45) > RING_CONTRAST_MIN:
+                n += 1
+        return n >= RING_MIN_COUNT
 
     def bgr(self, frame_rgb):
         """テンプレ照合用の BGR フレーム。detect() が変換済みならそれを使い回す。
@@ -1497,7 +1577,7 @@ class AutoLive:
                 self._frame_bgr = cv2.cvtColor(_rgb, cv2.COLOR_RGB2BGR)
             return self._frame_bgr
 
-        bright = float(frame_rgb.mean())
+        bright = frame_brightness(frame_rgb)
         res = {"_bright": (bright, 0, None)}
 
         def m(key):
@@ -1506,7 +1586,12 @@ class AutoLive:
             res[key] = (score, thr, pos)
             return score >= thr
 
-        if bright < DARK_THRESH:
+        # 薄暗いフレーム（DARK_THRESH〜DIM_THRESH）はリングが見えていればライブ中とみなす（DIM_THRESH の注記）。
+        # リングが見えている＝ライブ中なので、暗い側の救済照合（songselect/dailytask/eventresult）も
+        # 省ける（PAUSE 照合だけは常に行う）。実測: 薄暗いライブでは救済 3 件が 0.7 秒ごとに 93ms
+        # かかり判定フレームが 3500 → 3100 に落ちていた。
+        rings = bright > 50.0 and self._rings_visible(frame_rgb)
+        if bright < DARK_THRESH or (bright < DIM_THRESH and rings):
             # 暗い＝gameplay or PAUSE(暗背景)。**打鍵タイミング精度のため、重い pause/songselect
             # 照合は毎フレームせず DARK_RECHECK_SEC おきに間引く**（PAUSE・暗いsongselectは
             # タイミング非依存で数フレーム遅れて検出可）。間引くぶん _gameplay_timing のノーツ
@@ -1522,15 +1607,37 @@ class AutoLive:
                 res["pause"] = (score, thr, pos)
                 if score >= thr:
                     return "pause", res
-                if bright > 50.0 and m("songselect"):
-                    return "songselect", res
+                # **暗い側の救済照合はすべて範囲限定で行う。** 全画面照合のままだと、
+                # ウィンドウ上端の透過部に明るい別ウィンドウが写り込んで輝度が 50 を超えた
+                # だけで、0.7 秒ごとの再照合が 26ms → 297ms に跳ね、ライブ中のループ時間の
+                # 約4割を失う（実測 2026-09-11: 判定 2136 フレーム・打鍵 301 回・グレード C）。
+                if bright > 50.0 and not rings:
+                    _imgs, _thr = self.templates["songselect"]
+                    _sc, _pos = match_in_box(frame_bgr(), _imgs, SONGSELECT_SEARCH_BOX)
+                    res["songselect"] = (_sc, _thr, _pos)
+                    if _sc >= _thr:
+                        return "songselect", res
                 # イベントトップの「本日の課題」ポップアップは mean≈58 で暗判定に落ちる。
                 # 放置すると打鍵エンジンが動き、円の位置にある「イベント楽曲へ」ボタンを
                 # 叩いて制御外の遷移を起こす（実測 2026-08-03）。songselect と同じ
                 # 間引き枠で確認するので、ライブ中の追加コストはほぼ無い
                 # （gameplay 40 フレーム中 mean>50 は 1 枚だけ）。
-                if bright > 50.0 and m("dailytask"):
-                    return "dailytask", res
+                if bright > 50.0 and not rings:
+                    _imgs, _thr = self.templates["dailytask"]
+                    _sc, _pos = match_in_box(frame_bgr(), _imgs, DAILYTASK_SEARCH_BOX)
+                    res["dailytask"] = (_sc, _thr, _pos)
+                    if _sc >= _thr:
+                        return "dailytask", res
+                # EVENT RESULT の pt 画面はイベントテーマで暗くなる（実測 2026-09-10、
+                # KEEP OUT テーマで mean 57 < DARK_THRESH）。gameplay 扱いにすると円の位置を
+                # 盲目打鍵し続け、進むまで 40〜130 秒を浪費し、MIN_LIVE_SEC を超えて
+                # **偽クリアを二重計上**する。見出しは左上に固定なので範囲を絞って照合する。
+                if bright > 50.0 and not rings:
+                    imgs, thr = self.templates["eventresult"]
+                    score, pos = match_in_box(frame_bgr(), imgs, EVENTRESULT_SEARCH_BOX)
+                    res["eventresult"] = (score, thr, pos)
+                    if score >= thr:
+                        return "eventresult", res
             return "gameplay", res
         # --- 明るい画面（タイミング非依存。毎フレーム照合でよい）---
         if m("pause"):
@@ -1597,8 +1704,17 @@ class AutoLive:
             return "news", res
         if m("eventtop"):
             return "eventtop", res
+        # ログインボーナスはホームの上に出る。ホーム判定（背後の EVENT 帯が当たる）より先。
+        if m("loginbonus"):
+            return "loginbonus", res
+        if m("speciallogin"):
+            return "speciallogin", res
         if m("home"):
             return "home", res
+        # 「本日の課題」は生の平均輝度が 58 前後で、frame_brightness() では 78 前後になり
+        # 明るい側にも来る（帯の写り込みで揺れる領域）。カード型ポップアップなので cardx より先。
+        if m("dailytask"):
+            return "dailytask", res
         # 汎用カードポップアップ（報酬獲得/アイテム獲得/獲得一覧 等）の×を色検出で閉じる
         # （端末非依存）。専用ダイアログ判定の後・result の前（Result の上に重なって出るため）。
         # getattr: detect() は result_log 等の外部ツールからも __new__ 生成の
@@ -1686,19 +1802,16 @@ class AutoLive:
                     break
             else:
                 self.esc_since = None
-            if self.max_seconds and time.time() - self.t_start > self.max_seconds:
-                self.log("時間上限に到達 → 終了")
-                break
             self._keep_front()
             self._refresh_window()
             _t = time.time()
             frame = driver.grab(self.win)
             self._prof["grab"] += time.time() - _t
             _t = time.time()
-            rect = detect_content_rect(frame)
-            # 暗いゲーム画面でのみ正しく取れる。取れたらキャッシュし、明るい画面でも一貫使用。
-            if rect[1] - rect[0] < frame.shape[0] - 4:
-                self.content = rect
+            # 内容矩形は固定 (TITLEBAR_ROWS, h-9)。以前は暗い行から毎フレーム検出していたが、
+            # ウィンドウ上端の透過部に写り込む背後のウィンドウの明暗で上端が 0 ⇔ 38、下端が
+            # 339 ⇔ 347 と動き、内容相対で持つ円座標が縦に 6〜9px ずれていた（実測 2026-09-11）。
+            # 円の較正キャッシュも OFF_* も固定矩形で較正されている。
             state, res = self.detect(frame)
             # 周回の本線に戻れたら復帰 episode は終わり（次に迷い込んだら 2 回目）。
             if state in ("gameplay", "songselect", "friendselect", "formation"):
@@ -1709,6 +1822,14 @@ class AutoLive:
                 self.net_retries = 0
             self._prof["detect"] += time.time() - _t
             _t = time.time()
+            if self.max_seconds and time.time() - self.t_start > self.max_seconds:
+                # ライブの途中では止めない（CLAUDE.md「ライブの途中で autolive を止めないこと」）。
+                # リザルト以降の画面で抜ける。上限を MAX_SECONDS_GRACE 以上超えたら諦めて抜ける。
+                if state in SAFE_EXIT_STATES or \
+                        time.time() - self.t_start > self.max_seconds + MAX_SECONDS_GRACE:
+                    self.log("時間上限に到達 → 終了"
+                             + ("" if state in SAFE_EXIT_STATES else f"（{state} のまま猶予超過）"))
+                    break
             if self.verbose:
                 top3 = sorted(((v[0], k) for k, v in res.items()), reverse=True)[:3]
                 self.log(f"state={state} top={['%s:%.2f' % (k, s) for s, k in top3]} "
@@ -1813,6 +1934,7 @@ class AutoLive:
                 if self.was_in_live:
                     self.loops_done += 1
                     self.was_in_live = False
+                    self.starts_since_clear = 0
                     self.log(f"★ライブ クリア（通算 {self.loops_done}）")
                 self.log("フレンド申請 → 申請する")
                 self.click_match(res["friendreq"][2])
@@ -1822,6 +1944,7 @@ class AutoLive:
                 if self.was_in_live:
                     self.loops_done += 1
                     self.was_in_live = False
+                    self.starts_since_clear = 0
                     self.log(f"★ライブ クリア（通算 {self.loops_done}）")
                 self.log("連続ライブ 再プレイ → はい")
                 self.click_anchor(res["replay"][2], ANCH_REPLAY_YES)  # マッチ位置+オフセット（画像追従）
@@ -1886,6 +2009,15 @@ class AutoLive:
             elif state == "songselect":
                 # 連戦が終わって楽曲選択へ戻った → 曲と難易度を確定してから NEXT。
                 # NEXTテンプレのマッチ位置を直接クリック（端末非依存）。次状態で再検出して進める。
+                # **通常ライブの楽曲選択なら NEXT を押さない（絶対規則 3）。** 左下にイベントバッジが
+                # あるのは通常ライブ側。押してイベントトップへ移る（2026-09-12: ホームの EVENT リボンが
+                # 無反応で、LIVE 経由で入る必要があった。ここで NEXT を押すと pt ゼロの通常ライブを回す）。
+                _bs, _bp = match_best(self.bgr(frame), self.templates["eventbadge"][0])
+                if _bp is not None and _bs >= TEMPLATES["eventbadge"][1]:
+                    self.log(f"通常ライブの楽曲選択 → 左下のイベントバッジでイベントトップへ (score={_bs:.2f})")
+                    self.click_match(_bp)
+                    time.sleep(2.5)
+                    continue
                 if self.keep_selection:
                     # **例外イベント用（--keep-selection）**: 曲も難易度も選び直さない。
                     # 累計イベント以外（ポイントミッション等）は対象曲も難易度も前提が違う。
@@ -1928,6 +2060,22 @@ class AutoLive:
                 time.sleep(1.0)
             elif state == "formation":
                 # 編成画面 → START（STARTテンプレのマッチ位置を直接クリック・端末非依存）。
+                # **クリア無しで START が続いたら、押さずに停止する**（MAX_STARTS_WITHOUT_CLEAR）。
+                # 同じ編成画面での押し直し（タップ無視→数秒後に再検出）は 10 秒以内として数えない。
+                now = time.time()
+                if now - self.last_start_ts > 10.0:
+                    self.starts_since_clear += 1
+                self.last_start_ts = now
+                if self.starts_since_clear >= MAX_STARTS_WITHOUT_CLEAR:
+                    from PIL import Image as _I
+                    fn = os.path.join(self.dbg_dir,
+                                      f"live_abandoned_{int(now - self.t_start)}.png")
+                    _I.fromarray(frame).save(fn)
+                    self.log(f"[warn] クリア無しで START が {self.starts_since_clear} 回目 → "
+                             f"直前のライブが放棄された疑い。{fn} 保存して停止"
+                             f"（再接続病ならミラーリングを繋ぎ直す）")
+                    self.stop_reason = "live_abandoned"
+                    break
                 self.log("編成画面 → START")
                 self.click_match(res["formation"][2])
                 time.sleep(2.0)
@@ -1985,9 +2133,37 @@ class AutoLive:
                 # ホーム → **EVENT リボン**（ベージュのラベル帯＝累計イベント側）。
                 # ホームの「LIVE」から入ると通常ライブでイベント pt が一切付かない（絶対規則3）
                 # ので、ここでは EVENT ラベルのマッチ位置以外を絶対に押さない。
+                self.home_taps += 1
+                if self.home_taps > HOME_RIBBON_MAX_TAPS:
+                    # EVENT リボンが無反応（2026-09-12 04:13 実機、位置を変えても無反応）。
+                    # 下部ナビ LIVE → 通常楽曲選択 → 左下のイベントバッジ → イベントトップ、で迂回する。
+                    # 通常楽曲選択では songselect ハンドラがバッジを優先するので NEXT は押されない。
+                    _ls, _lp = match_best(self.bgr(frame), self.templates["navlive"][0])
+                    if _lp is not None and _ls >= TEMPLATES["navlive"][1]:
+                        self.log(f"ホーム → EVENT リボンが {self.home_taps - 1} 回無反応 → 下部ナビ LIVE から迂回")
+                        self.click_match(_lp)
+                        time.sleep(2.5)
+                        continue
                 self.log("ホーム → EVENT リボン")
                 self.click_match(res["home"][2])
                 time.sleep(2.0)
+            elif state in ("loginbonus", "speciallogin"):
+                # 04:00 リセットの LOGIN BONUS（2 ページ）／イベントの特別ログインボーナス。
+                # どちらも画面タップで送る。閉じられなければ停止。
+                now = time.time()
+                if self.menu_since is None:
+                    self.menu_since = now
+                if now - self.menu_since > STUCK_STOP_SEC:
+                    from PIL import Image as _I
+                    fn = os.path.join(self.dbg_dir,
+                                      f"loginbonus_stuck_{int(now - self.t_start)}.png")
+                    _I.fromarray(frame).save(fn)
+                    self.log(f"[warn] ログインボーナスを閉じられず停滞 → {fn} 保存して停止")
+                    self.stop_reason = "loginbonus_stuck"
+                    break
+                self.log(f"{'特別' if state == 'speciallogin' else ''}ログインボーナス → 画面タップで送る")
+                self.click_window(*P_CARD_DISMISS)
+                time.sleep(0.8)
             elif state == "eventtop":
                 # イベントトップ → 「イベント楽曲」。この後 songselect に合流して周回へ戻る。
                 self.log("イベントトップ → イベント楽曲")
@@ -2048,6 +2224,7 @@ class AutoLive:
                 if self.was_in_live:
                     self.loops_done += 1
                     self.was_in_live = False
+                    self.starts_since_clear = 0
                     self.log(f"★ライブ クリア（通算 {self.loops_done}）"
                              f" 打鍵{self.tap_count}回 / 判定{self.frame_count}フレーム"
                              + (f" [取得{self._prof['grab']:.0f}s 判定{self._prof['detect']:.0f}s "
@@ -2094,9 +2271,11 @@ class AutoLive:
                     self.stop_reason = "unknown_screen"
                     break
                 time.sleep(0.3)
+            if state != "home":
+                self.home_taps = 0
             # 進捗のある状態に遷移したら停滞タイマーをリセット。menu/rankup/closex は
             # 同画面ループの可能性があるのでタイマーを維持し watchdog 対象とする。
-            if state not in ("menu", "rankup", "closex", "cardx"):
+            if state not in ("menu", "rankup", "closex", "cardx", "loginbonus", "speciallogin"):
                 self.menu_since = None
             # result/eventresult を抜けたら（=進捗）Result停滞タイマーをリセット。
             self._prof["act"] += time.time() - _t
@@ -2121,10 +2300,7 @@ def calibrate(seconds=15.0):
     print(f"[calibrate] {seconds}s 計測開始（手動でライブをプレイしてください）", flush=True)
     while time.time() - t0 < seconds:
         frame = driver.grab(win)
-        rect = detect_content_rect(frame)
-        if rect[1] - rect[0] < frame.shape[0] - 4:
-            al.content = rect
-        if float(frame.mean()) < DARK_THRESH:  # gameplay フレームのみ
+        if frame_brightness(frame) < DARK_THRESH:  # gameplay フレームのみ
             for i in range(len(CIRCLES)):
                 samples[i].append(al._roi_white_frac(frame, i))
             n += 1

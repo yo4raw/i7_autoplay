@@ -26,7 +26,7 @@ PROBES = ["trigger_test.py", "idlekeeper.py", "capture_click.py", "color_probe.p
 
 # 移動後にアセットを参照するモジュールと、その参照先を持つ属性名
 OPS_ASSET_ATTRS = {
-    "reconnect_watcher": ["RETRY_TMPL"],
+    "reconnect_watcher": ["RETRY_TMPLS"],
     "unlock_watcher": ["TMPL"],
     "recover_freeze": ["SCREENS", "TEMPLATES"],
 }
@@ -80,8 +80,11 @@ class TestOpsPathResolution(unittest.TestCase):
                 mod = importlib.import_module(name)
                 for attr in attrs:
                     p = getattr(mod, attr)
+                    paths = list(p) if isinstance(p, (list, tuple)) else [p]
                     with self.subTest(module=name, attr=attr):
-                        self.assertTrue(os.path.exists(p), f"{name}.{attr} = {p}")
+                        self.assertTrue(paths, f"{name}.{attr} が空")
+                        for q in paths:
+                            self.assertTrue(os.path.exists(q), f"{name}.{attr} = {q}")
         finally:
             sys.path.remove(opsdir)
 

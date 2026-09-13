@@ -120,5 +120,68 @@ class TestRunUntilBranches(unittest.TestCase):
         self.assertNotIn("NG", r.stdout, r.stdout)
 
 
+class TestLiveAbandonedGuard(unittest.TestCase):
+    """クリアを挟まずに START が続いたら、**押す前に** live_abandoned で停止すること。
+
+    2026-09-10 実機: 再接続病のセッションで START → PAUSE → 打鍵が「諦める」を踏む →
+    楽曲選択 → START が 35 秒周期で 4 回続き、クリア 0・警告 0 で LIFE だけ減った。
+    autolive にも supervisor にも止める仕組みが無く、監視シェルで代用していた。
+    """
+
+    def formation_block(self):
+        lines = open(AUTOLIVE, encoding="utf-8").read().split("\n")
+        start = next(i for i, l in enumerate(lines)
+                     if l.strip() == 'elif state == "formation":')
+        indent = len(lines[start]) - len(lines[start].lstrip())
+        for i in range(start + 1, len(lines)):
+            l = lines[i]
+            if l.strip() and (len(l) - len(l.lstrip())) <= indent:
+                return lines[start:i]
+        raise AssertionError("formation ブロックの終端が見つからない")
+
+    def test_stops_before_pressing_start(self):
+        block = self.formation_block()
+        i_reason = next(i for i, l in enumerate(block) if 'self.stop_reason = "live_abandoned"' in l)
+        i_click = next(i for i, l in enumerate(block) if "click_match" in l)
+        self.assertLess(i_reason, i_click, "停止判定が START 押下より後にある")
+        self.assertTrue(any("break" == l.strip() for l in block[i_reason:i_click]),
+                        "停止判定の後で break していない")
+
+    def test_counter_resets_on_every_clear(self):
+        """クリア計上（was_in_live を下ろす箇所）すべてでカウンタを戻すこと。"""
+        src = open(AUTOLIVE, encoding="utf-8").read()
+        n_clear = src.count("                    self.was_in_live = False")
+        n_reset = src.count("                    self.starts_since_clear = 0")
+        self.assertGreaterEqual(n_clear, 3)
+        self.assertEqual(n_clear, n_reset, "クリア計上箇所とカウンタリセットの数が合わない")
+
+    def test_threshold_is_two(self):
+        self.assertEqual(2, AL.MAX_STARTS_WITHOUT_CLEAR,
+                         "2 回目の START で止めないと損失が 1 ライブ分を超える")
+
+
+class TestTimeLimitNotMidLive(unittest.TestCase):
+    """時間上限（--max-seconds）でライブの途中に抜けないこと。
+
+    締め時刻に gameplay のまま break すると、その周回の LIFE が丸ごと無駄になる
+    （CLAUDE.md「ライブの途中で autolive を止めないこと」）。
+    """
+
+    def test_time_limit_check_is_after_detect_and_skips_gameplay(self):
+        src = open(AUTOLIVE, encoding="utf-8").read()
+        body = src[src.index("    def _loop(self):"):src.index("\ndef calibrate(")]
+        i_detect = body.index("state, res = self.detect(frame)")
+        i_limit = body.index("時間上限に到達")
+        self.assertLess(i_detect, i_limit, "時間上限の判定は detect() の後に置くこと")
+        window = body[body.rfind("if self.max_seconds", 0, i_limit):i_limit]
+        self.assertIn("SAFE_EXIT_STATES", window, "安全な画面でだけ抜けること")
+        self.assertIn("MAX_SECONDS_GRACE", window, "猶予を超えたら抜ける上限が無い")
+        self.assertGreaterEqual(AL.MAX_SECONDS_GRACE, 150, "猶予はライブ 1 本分（約 120 秒）以上")
+        for s in ("gameplay", "pause", "menu", "liveassist"):
+            self.assertNotIn(s, AL.SAFE_EXIT_STATES, f"{s} で抜けると始まった/始まるライブが無人になる")
+        for s in ("result", "songselect", "formation"):
+            self.assertIn(s, AL.SAFE_EXIT_STATES)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -301,9 +301,9 @@ class TestDailyTaskPopup(unittest.TestCase):
     def test_judged_in_the_dark_path(self):
         """明るい側に置いても意味がない（そこまで到達しない）。"""
         src = read_src()
-        start = src.index("if bright < DARK_THRESH:")
+        start = src.index("if bright < DARK_THRESH")
         end = src.index('return "gameplay", res', start)
-        self.assertIn('m("dailytask")', src[start:end],
+        self.assertIn('self.templates["dailytask"]', src[start:end],
                       "dailytask は暗い側の判定に置くこと")
 
     def test_shares_the_throttled_recheck(self):
@@ -312,11 +312,11 @@ class TestDailyTaskPopup(unittest.TestCase):
         songselect 救済と同じ間引き枠（DARK_RECHECK_SEC）に相乗りしていること。
         """
         src = read_src()
-        start = src.index("if bright < DARK_THRESH:")
+        start = src.index("if bright < DARK_THRESH")
         end = src.index('return "gameplay", res', start)
         dark = src[start:end]
         self.assertIn("self._last_dark_check", dark)
-        self.assertLess(dark.index("self._last_dark_check"), dark.index('m("dailytask")'))
+        self.assertLess(dark.index("self._last_dark_check"), dark.index('self.templates["dailytask"]'))
 
     def test_handler_closes_with_x(self):
         body = handler_body("dailytask")

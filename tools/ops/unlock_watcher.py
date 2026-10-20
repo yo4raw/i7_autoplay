@@ -26,7 +26,8 @@ def main():
         try:
             f = driver.grab(driver.find_window())
             bgr = cv2.cvtColor(f, cv2.COLOR_RGB2BGR)
-            s, _ = match_multiscale(bgr, t)
+            # macOS のロック解除プロンプトの照合はゲーム窓スケールを掛けない（scale=1.0）。
+            s, _ = match_multiscale(bgr, t, 1.0)
         except Exception as e:
             print(f"[warn] {e}", flush=True)
             time.sleep(60)

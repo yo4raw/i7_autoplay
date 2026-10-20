@@ -7,13 +7,25 @@ import os
 import sys
 import unittest
 
+import cv2  # noqa: E402  # きなこ行の検証で BGR 変換に使う（下の LRS.load 参照）
 import numpy as np
 from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
+sys.path.insert(0, os.path.dirname(__file__))
 import autolive as AL  # noqa: E402
+import test_life_recover_safety as LRS  # noqa: E402  # _FakeLive 等を再利用
 
 FRAMES = os.path.join(os.path.dirname(__file__), "frames")
+
+
+def load_rgb(name):
+    return np.array(Image.open(os.path.join(FRAMES, name)).convert("RGB"))
+
+
+def load(name):
+    """テンプレ照合用に **BGR** で返す（test_life_recover_safety.load と同じ）。"""
+    return cv2.cvtColor(load_rgb(name), cv2.COLOR_RGB2BGR)
 
 
 def detect_file(name):
@@ -413,3 +425,137 @@ class TestIcloudSyncDialog(unittest.TestCase):
         y = cy + AL.ANCH_ICLOUD_NO[1]
         self.assertTrue(225 <= x <= 445 and 197 <= y <= 226,
                         f"着弾 ({x:.0f},{y:.0f}) が「今はしない」ボタン外")
+
+
+class TestShrunkenWindow656(unittest.TestCase):
+    """ミラーリング窓が基準サイズ（671x348）から縮んだフレームでも認識できること。
+
+    2026-10-20 実機: 窓が 671x348 → 656x341 に縮み（幅比 0.9776）、等倍テンプレとの
+    照合がどの SCALES 段でも約 2% ずれて閾値を割った。friendselect 0.844（閾値 0.85）
+    で `connected()` が「接続中」を誤認し、lifefull 0.669（閾値 0.80）で
+    `songselect_stuck`、lifeshort を `cardx` に流して `cardx_stuck` まで発生した。
+    `window_scale()` が SCALES の各段に係数を掛けるので追従する。
+    """
+
+    def test_friendselect_656(self):
+        state, res = detect_file("friendselect_656x341.png")
+        self.assertEqual("friendselect", state,
+                         f"{state} と誤判定 (score={res.get('friendselect')})")
+
+    def test_lifefull_over_songselect_656(self):
+        state, res = detect_file("life_full_over_songselect_656x341.png")
+        self.assertEqual("lifefull", state,
+                         f"{state} と誤判定 (score={res.get('lifefull')})")
+
+    def test_lifeshort_656(self):
+        for name in ("lifeshort_kinako_qty1_656x341.png",
+                     "lifeshort_kinako_qty3_656x341.png"):
+            with self.subTest(frame=name):
+                state, res = detect_file(name)
+                self.assertEqual("lifeshort", state,
+                                 f"{state} と誤判定 (score={res.get('lifeshort')})")
+
+    def test_reference_sizes_stay_exactly_unscaled(self):
+        """基準サイズのフレームでは s=1.0（照合段が増えず結果も従来どおり）。"""
+        self.assertEqual(1.0, AL.window_scale_wh(671, 348))
+        self.assertEqual(1.0, AL.window_scale_wh(529, 334))
+        self.assertAlmostEqual(656 / 671, AL.window_scale_wh(656, 341))
+
+
+class _FakeLive656(LRS._FakeLive):
+    """656x341 フィクスチャで `_recover_life` を回す Fake。
+
+    親の数量シミュレーション（ステッパー座標・フレーム選択）は 671x348 の実測値に
+    固定されているため、656 用に両方を持ち替える。撮影は数量 1 → 「+」後は数量 3
+    の実フレームを返す。
+    """
+
+    QTY_FRAMES_656 = {1: "lifeshort_kinako_qty1_656x341.png",
+                      3: "lifeshort_kinako_qty3_656x341.png"}
+
+    def _grab(self):
+        if self.qty is not None:
+            q = 3 if self.qty >= 3 else 1
+            return load_rgb(self.QTY_FRAMES_656[q])
+        return super()._grab()
+
+    def _click_screen(self, px, py):
+        x, y = px - self.win["x"], py - self.win["y"]
+        self.clicks.append((x, y))
+        # 656x341 の実測ステッパー: 「−」x 280..298 / 数量欄 / 「+」x 339..356、
+        # きなこ「回復」x 378..432（y はいずれも 160..182 前後）
+        if self.qty is not None and 160 <= y <= 182:
+            if 339 <= x <= 356:
+                self.qty += 1
+            elif 280 <= x <= 298:
+                self.qty = max(1, self.qty - 1)
+            elif 378 <= x <= 432:
+                self.recover_qty = self.qty
+
+
+class TestRecoverLifeShrunkenWindow(unittest.TestCase):
+    """656x341 の LIFE 不足ダイアログで「きなこ行の回復」だけを押すこと。
+
+    実測矩形（656x341）: きなこ「回復」x 378..432・y 160..182、
+    ステラ「回復」x 378..432・y 220..242。**着弾がステラ行に入ったら課金事故。**
+    """
+
+    KINAKO_BUTTON_656 = (378, 160, 432, 182)
+    STELLA_BUTTON_656 = (378, 220, 432, 242)
+
+    def setUp(self):
+        self._sleep = AL.time.sleep
+        AL.time.sleep = lambda s: None
+        self._saved = (AL.LIFE_CONFIRM_WAIT_SEC, AL.KINAKO_RECHECK_SEC)
+        AL.LIFE_CONFIRM_WAIT_SEC = 0.0
+        AL.KINAKO_RECHECK_SEC = 30.0
+
+    def tearDown(self):
+        AL.time.sleep = self._sleep
+        AL.LIFE_CONFIRM_WAIT_SEC, AL.KINAKO_RECHECK_SEC = self._saved
+
+    def _assert_only_kinako_clicks(self, clicks):
+        kx0, ky0, kx1, ky1 = self.KINAKO_BUTTON_656
+        sx0, sy0, sx1, sy1 = self.STELLA_BUTTON_656
+        for x, y in clicks:
+            self.assertFalse(sy0 - 10 <= y <= sy1 + 10,
+                             f"ステラ行の高さに着弾 ({x:.0f},{y:.0f})")
+        x, y = clicks[-1]
+        self.assertTrue(kx0 <= x <= kx1 and ky0 <= y <= ky1,
+                        f"最後のクリック ({x:.0f},{y:.0f}) がきなこ「回復」の外")
+
+    def test_recover_at_qty3_656(self):
+        """数量欄が「3」の 656 フレームでは、そのまま「回復」だけを押す。"""
+        fr = load_rgb("lifeshort_kinako_qty3_656x341.png")
+        al = _FakeLive656([fr])
+        status, _, _ = al._recover_life(fr)
+        self.assertEqual("recovered", status)
+        self.assertEqual(1, len(al.clicks), al.clicks)
+        self._assert_only_kinako_clicks(al.clicks)
+
+    def test_recover_at_qty1_plus_twice_656(self):
+        """数量欄が「1」の 656 フレームでは「+」×2 → 数量 3 で「回復」。"""
+        fr = load_rgb("lifeshort_kinako_qty1_656x341.png")
+        al = _FakeLive656([fr], qty=1)
+        status, _, _ = al._recover_life(fr)
+        self.assertEqual("recovered", status)
+        self.assertEqual(3, al.recover_qty, "数量 3 で「回復」を押していない")
+        self.assertEqual(3, len(al.clicks), al.clicks)   # 「+」×2 + 「回復」
+        self._assert_only_kinako_clicks(al.clicks)
+
+    def test_kinako_row_found_and_point_on_656(self):
+        """656 の両フレームできなこ行が見つかり、着弾がきなこ行・ステラ行から十分離れる。"""
+        imgs, thr = AL.load_templates()["kinakorow"]
+        for name in ("lifeshort_kinako_qty1_656x341.png",
+                     "lifeshort_kinako_qty3_656x341.png"):
+            with self.subTest(frame=name):
+                score, pos = AL.match_best(load(name), imgs)
+                self.assertGreaterEqual(score, thr,
+                                        f"きなこパン行を見失った (score={score:.3f})")
+                x, y = AL.kinako_recover_point(load_rgb(name), pos)
+                kx0, ky0, kx1, ky1 = self.KINAKO_BUTTON_656
+                self.assertTrue(kx0 <= x <= kx1 and ky0 <= y <= ky1,
+                                f"着弾 ({x:.0f},{y:.0f}) がきなこ「回復」の外")
+                self.assertLess(y, self.STELLA_BUTTON_656[1] - 0.1 * 341,
+                                f"着弾 y={y:.0f} がステラ行に近い")
+

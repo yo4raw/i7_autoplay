@@ -38,7 +38,9 @@ def main():
             time.sleep(60)
             continue
         bgr = cv2.cvtColor(f, cv2.COLOR_RGB2BGR)
-        score, pos = max((match_multiscale(bgr, t) for t in tmpls), key=lambda r: r[0])
+        # macOS の切断ダイアログの照合はゲーム窓スケールを掛けない（scale=1.0）。
+        # 切断中は窓が縦長になり、窓幅基準の係数でボタンを縮めると当たらなくなる。
+        score, pos = max((match_multiscale(bgr, t, 1.0) for t in tmpls), key=lambda r: r[0])
         if score >= 0.85 and pos is not None:
             misses = 0
             h, w = f.shape[:2]

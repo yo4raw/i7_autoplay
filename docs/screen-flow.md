@@ -166,7 +166,7 @@ EVENT RESULT の上に出て `unknown_screen` 停止）。**「今はしない�
 ```mermaid
 stateDiagram-v2
     [*] --> songselect
-    songselect --> friendselect: 曲を選択→EASY→NEXT（--keep-selection 時は NEXT のみ）
+    songselect --> friendselect: NEXT（現行の --keep-selection。旧運用は曲を選択→EASY→NEXT）
     friendselect --> formation: 最上段のフレンドを選択
     formation --> gameplay: START
     gameplay --> result: ライブ完走（約115秒）
@@ -187,7 +187,7 @@ stateDiagram-v2
 
 | 状態 | 操作 | 補足 |
 |---|---|---|
-| `songselect` | **左下にイベントバッジがあれば通常ライブの楽曲選択なので NEXT を押さず、バッジでイベントトップへ**（絶対規則 3）。それ以外は対象曲を選択 → EASY タブ → NEXT | 曲テンプレに一致しなければ**曲を変更しない**（安全側）。`--keep-selection` の回は曲も難易度も選び直さず NEXT のみ押す（累計イベント以外の例外運用）。NEXT の後は**画面が変わるまで**（最大 1.4 秒）待つ。**変わらないまま `SONGSELECT_NOCHANGE_MAX`(6) 回続いたら `songselect_stuck` で停止**（「ライフを全回復しました。」等の見えない蓋に NEXT が飲まれた場合。2026-10-11 実機で約30回・60秒の空打ちが起きた） |
+| `songselect` | **左下にイベントバッジがあれば通常ライブの楽曲選択なので NEXT を押さず、バッジでイベントトップへ**（絶対規則 3）。それ以外は、**現行運用の `--keep-selection`（2026-10-20 ユーザー指定・難易度は人が選んだまま継続）では NEXT のみ**。旧運用の既定経路では対象曲を選択 → EASY タブ → NEXT | 既定経路では曲テンプレに一致しなければ**曲を変更しない**（安全側）。NEXT の後は**画面が変わるまで**（最大 1.4 秒）待つ。**変わらないまま `SONGSELECT_NOCHANGE_MAX`(6) 回続いたら `songselect_stuck` で停止**（「ライフを全回復しました。」等の見えない蓋に NEXT が飲まれた場合。2026-10-11 実機で約30回・60秒の空打ちが起きた） |
 | `friendselect` | **一覧が静止してから**、必ず最上段の行をタップ | `match_topmost()`。最良スコアだと行が定まらない。遷移アニメ中のタップは無視されるため、静止した新しいフレーム（0.25 秒差の2枚がほぼ同じ）で行を探し直して押す（旧: 1回目が無視され次の detect の 4 秒後に押し直していた）。押した後は画面が変わるまで（最大 1.0 秒）待つ |
 | `formation` | START | 直後 `CARDX_SUPPRESS_SEC` の間は `cardx` を無視する。**クリアを挟まず 2 回目の START になったら押さずに停止**（`live_abandoned`） |
 | `gameplay` | ノーツ到達を検出して打鍵 | 別章「4. ライブ中」参照 |

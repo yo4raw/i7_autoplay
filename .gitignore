@@ -24,3 +24,6 @@ venv/
 
 # 円自動キャリブレーションの結果キャッシュ（端末ごとの実測値。再起動時の即時復元用）
 /.autocal_circles.json
+
+# ローカル LLM モデル（GGUF。数GB単位）
+/data/models/

@@ -90,8 +90,8 @@ Claude Code では `/run-forever`（`.claude/skills/run-forever/SKILL.md`）が�
 | 確認 | 正しい状態 | 違うとどうなるか |
 |---|---|---|
 | **オート** | **OFF** | ON だと1ライブにつきブリンドリンクを3個消費する |
-| **ブースト** | **3倍** | イベント pt の効率が落ちる |
-| 難易度 | **EASY** | 〃 |
+| **ブースト** | **イベント上限**（通常 3倍・上限10倍イベントは 10倍） | イベント pt の効率が落ちる |
+| 難易度 | **人が選んだもの**（周回中は変えない） | 2026-10-20 ユーザー指定。`--keep-selection` で触らない |
 | 入口 | ホーム**右側の EVENT リボン（ラベル帯ベージュ）**から入った楽曲 | ホームの「LIVE」から入ると通常ライブで **pt が一切付かない** |
 | きなこパン残量 | 周回数ぶん残っている | 枯渇すると安全停止する（`kinako_missing`） |
 | ステラ所持数 | 開始前の数を控える | 終了後に減っていたら誤消費。詳細は [`operations.md`](operations.md)「実機を動かす際の確認項目」 |
@@ -222,3 +222,4 @@ AUTO 周回作業を、macOS の **iPhone ミラーリング** 経由で自動�
 | 0.15 | 2026-07-30 | **ドキュメントを実態中心に再編**（specification.md 1,056行を README/setup/architecture/device-findings/navigation/operations へ分割、未実装の当初設計は archive/original-design.md へ、本体は案内スタブ化）。tools/ を本番3・ops8・probes12 に3分類。未追跡20ファイルを取り込み、実フレームコーパスは .gitignore。回帰テスト2本を新設。**新知見**: 再接続後のPAUSE再燃を再現し iohid_click も無効と確定（40秒で8回）、イベント「BUDDY Night NARRATIVE」の導線座標、難易度タブのLIFE表示はブースト3倍込みの実消費値 |
 | 0.16 | 2026-08-02 | **docs/ を12→7ファイルに整理**（3,180→約1,500行）。重複した `screen-transitions.md`（`screen-flow.md` と重複）、事実と食い違う `note-engine-dev.md`、転送スタブ `specification.md`、未実装の `archive/original-design.md`、対応済みレビュー `improvements.md` を削除。**「実機を動かす際の確認項目」は [operations.md](operations.md) へ救出**。`tools/autolive.py` のコメント6箇所とテストの背景記述を実在するドキュメントへ張り替えた。削除内容は git 履歴から復元可能（`git show 6d6e34b:docs/improvements.md`）|
 | 0.17 | 2026-08-06 | **実機A/Bで打鍵フラグ3件に決着（[device-findings.md](device-findings.md)「実機A/B: ジッター採用・緑ホールド却下・predict 却下」）**。リザルト成績を数値で転記して比較した。**着弾点ジッター=採用（既定ON維持・悪化指標ゼロ）**、**`--green-hold`=採用し supervisor 既定へ投入**（best を前後に挟む交互測定で MISS 中央値 5→4・SCORE +4.5%、MISS≤4 達成率 best 0/37 vs green 24/27）、**`--predict`=却下**（MISS 5.1→55.9）。**`result_log.py` の取得方式のバグを修正**（バースト撮影は12ライブ中8件を取り逃がし、しかも遷移がもたつく＝成績の悪いライブほど落ちる**非ランダムな欠測**で、緑ホールドの採否を一度誤らせた。追跡方式へ変更し ScoreTracker をテスト可能に切り出し）。autolive にライブ品質の自己診断を追加（打鍵<330 で大量MISS、>600 で2ライブ連結を警告）。run_until.sh が **Mac ロックを切断と区別**するようにした（従来は誤った復旧方法を案内して直らない状態を待ち続けていた）|
+| 0.18 | 2026-10-20 | **難易度は人が選んだものをそのまま継続する**運用へ変更（ユーザー指定。CLAUDE.md 絶対規則 2・`--keep-selection` を正とする）。OCR に `pyobjc-framework-Vision` を採用。周回を止めていた原因（ミラーリング窓が 671x348→656x341 に縮みテンプレが閾値割れ）と、きなこパン回復量のイベント差・打鍵ループ約 16 FPS への対処を [`superpowers/specs/2026-10-20-loop-robustness-design.md`](superpowers/specs/2026-10-20-loop-robustness-design.md) に仕様化（未実装）。周回と無関係の `tools/saluki_chat.sh` を削除 |

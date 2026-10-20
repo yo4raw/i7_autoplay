@@ -13,8 +13,8 @@
 
 ### 2.3 主要依存ライブラリ（詳細は「14.1 推奨ライブラリ」）
 `opencv-python` / `numpy` / `Pillow` / `mss` / `pyobjc-framework-Quartz` /
-`pyobjc-framework-AppKit` / `ocrmac`（Apple Vision OCR）/ `PyYAML` / `pydantic` /
-`typer` / `pynput`
+`pyobjc-framework-Cocoa` / `pyobjc-framework-Vision`（Apple Vision OCR。LIFE 不足ダイアログの数値読み取り用）。
+インストールは `CLAUDE.md`「コマンド」のセットアップ行を使う。
 
 ### 2.4 事前セットアップ（権限付与・接続）
 本ツールは macOS の TCC 権限を **2つ** 必要とする。付与対象は **本ツールを起動するホスト
@@ -47,7 +47,7 @@ v1 ではミラーリングウィンドウのサイズ固定を前提とし、�
 | キャプチャ（将来） | ScreenCaptureKit（pyobjc） | 遮蔽対応・低 CPU、同一 IF 裏で差替可能 |
 | ウィンドウ列挙/入力 | `pyobjc-framework-Quartz` | `CGWindowListCopyWindowInfo`、CGEvent（精密な down/drag/up） |
 | 最前面化 | `pyobjc-framework-AppKit` / AppleScript | `NSRunningApplication.activate` |
-| OCR | `ocrmac`（Apple Vision, `jpn`） | macOS で日本語高精度・追加バイナリ不要 |
+| OCR | `pyobjc-framework-Vision`（`VNRecognizeTextRequest`, ja-JP） | macOS 標準の Vision を直接呼ぶ。追加バイナリ不要・ローカル完結。初回呼び出しは約 25 秒（モデル読み込み） |
 | 設定 | `PyYAML` + `pydantic` v2 | 人手編集 YAML ＋ スキーマ検証 |
 | CLI | `typer` | サブコマンド・オプション |
 | ログ | 標準 `logging` | stdout ＋ ローテーションファイル |

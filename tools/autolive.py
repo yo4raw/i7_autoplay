@@ -608,6 +608,10 @@ TITLEBAR_EQUIV = 210.0
 # 上限 90: 明るい MV のライブフレームは実測で frame_brightness 73 まで上がる（2026-09-12 Dis one.）。
 # リングが 3 円見えることが条件なので、コーパスの非ライブ画面（n_ok 最大 2）には影響しない。
 DIM_THRESH = 90.0
+# ライブを確認できたフレームから、この秒数以内の薄暗いフレーム（DIM_THRESH 未満）は
+# リングが見えなくてもライブの続き（スキルカットイン）とみなす。実測 2026-10-20:
+# カットイン 42 区間の長さは中央値 0.57 秒・90% 1.53 秒・最長 2.43 秒、明るさ最大 82.8。
+CUTIN_GRACE_SEC = 3.0
 RING_CONTRAST_MIN = 40.0     # リング上の明るさ − 内側の明るさ（max(R,G,B)）
 RING_MIN_COUNT = 3           # 4 円中これ以上でリングが見えていれば「ライブ中」
 # 暗い画面（gameplay/PAUSE）では、重い pause/songselect テンプレ照合を毎フレームせず
@@ -2143,8 +2147,8 @@ class AutoLive:
                  f" [取得{live['grab']:.0f}s 判定{live['detect']:.0f}s 打鍵{live['act']:.0f}s]"
                  f"  他[取得{oth['grab']:.0f}s 判定{oth['detect']:.0f}s 打鍵{oth['act']:.0f}s]"
                  f"  経路[暗{paths.get('dark', 0)} 薄暗+輪{paths.get('dim_rings', 0)}"
-                 f" 明{paths.get('bright', 0)} 再照合{paths.get('recheck', 0)}"
-                 f" 救済{paths.get('rescue', 0)}]")
+                 f" カットイン{paths.get('cutin', 0)} 明{paths.get('bright', 0)}"
+                 f" 再照合{paths.get('recheck', 0)} 救済{paths.get('rescue', 0)}]")
         if live_sec > LIVE_MERGED_WARN_SEC:
             self.log(f"[warn] gameplay/pause が {live_sec:.0f}s 続いた"
                      f"（1ライブ長≈110-125s+PAUSE の上限≈{LIVE_MERGED_WARN_SEC:.0f}s超）→"
@@ -2219,14 +2223,29 @@ class AutoLive:
         # b>50 の全フレーム（明るいメニュー全てを含む）で _rings_visible の全画面
         # スキャン（実測 2〜3ms）を行っていた。明るい側では値自体が不要なので計算しない。
         # rings は評価後「None=未評価 / True / False」。薄暗い側に入ったなら True。
+        #
+        # **ライブ中のスキルカットイン（2026-10-20 実機）**: 「Encounter Love Song」では
+        # 1ライブに 30〜40 回、明るさ 65〜83 のカットインが最長 2.4 秒かかり、リングが隠れる
+        # フレームが多い。旧判定はこれを明るい側（全段照合 ≈1 秒 + menu の待ち 0.3 秒）へ
+        # 流し、その間は打鍵が止まって 1 ライブ ≈45 秒を失っていた（ライブ内訳の「明」と
+        # 「他 判定 47〜51s」で確認）。ライブを**確認できた**フレーム（暗い・薄暗い+リング）
+        # から CUTIN_GRACE_SEC 以内の薄暗いフレームは、リングが無くてもライブの続きとみなす。
+        # 猶予の起点は確認できたフレームだけで更新する（猶予中の gameplay 判定では延長しない）
+        # ので、ライブ後の薄暗い Result 等に入り込んでも CUTIN_GRACE_SEC で必ず抜ける。
+        # PAUSE と暗い側の救済照合（songselect/dailytask/eventresult 等）は猶予中も走る。
         rings = None
+        live_recent = time.time() - getattr(self, "_live_confirmed_ts", 0.0) <= CUTIN_GRACE_SEC
         if bright < DARK_THRESH:
             self._detect_path("dark")
         elif bright < DIM_THRESH and (rings := self._rings_visible(frame_rgb)):
             self._detect_path("dim_rings")
+        elif bright < DIM_THRESH and live_recent:
+            self._detect_path("cutin")
         else:
             self._detect_path("bright")
-        if bright < DARK_THRESH or (bright < DIM_THRESH and rings):
+        confirmed = bright < DARK_THRESH or (bright < DIM_THRESH and rings)
+        cutin = not confirmed and bright < DIM_THRESH and live_recent
+        if confirmed or cutin:
             # 暗い＝gameplay or PAUSE(暗背景)。**打鍵タイミング精度のため、重い pause/songselect
             # 照合は毎フレームせず DARK_RECHECK_SEC おきに間引く**（PAUSE・暗いsongselectは
             # タイミング非依存で数フレーム遅れて検出可）。間引くぶん _gameplay_timing のノーツ
@@ -2292,6 +2311,8 @@ class AutoLive:
                         return "imessage", res
                     if dark_match("icloudsync"):
                         return "icloudsync", res
+            if confirmed:
+                self._live_confirmed_ts = time.time()
             return "gameplay", res
         # --- 明るい画面（タイミング非依存。毎フレーム照合でよい）---
         # 全キーの照合を判定順に常駐プールへ投げる。暗い側（ライブ中）では投げない

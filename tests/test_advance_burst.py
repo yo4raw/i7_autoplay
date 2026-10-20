@@ -90,11 +90,17 @@ class TestGuard(unittest.TestCase):
 
 class TestBurst(unittest.TestCase):
     def setUp(self):
+        # 上限時間（ADVANCE_BURST_SEC）は実時間で効くので、照合が遅い負荷時（全件実行中）は
+        # 6 打目の前に時間切れになり 5 打で終わる（2026-10-20 に偶発失敗）。ここで固定したいのは
+        # 「何打叩くか・どこを叩くか」なので、時間の上限は十分大きくして回数の上限だけで止める。
         self._sleep = AL.time.sleep
         AL.time.sleep = lambda s: None
+        self._burst_sec = AL.ADVANCE_BURST_SEC
+        AL.ADVANCE_BURST_SEC = 600.0
 
     def tearDown(self):
         AL.time.sleep = self._sleep
+        AL.ADVANCE_BURST_SEC = self._burst_sec
 
     def test_burst_taps_only_the_right_side_point(self):
         al = _Fake([rgb(CARD)])

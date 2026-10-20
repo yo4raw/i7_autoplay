@@ -31,7 +31,7 @@ _SCT = None
 def _get_sct():
     global _SCT
     if _SCT is None:
-        _SCT = _mss.mss()
+        _SCT = _mss.MSS()   # mss 10.2 で mss.mss() は DeprecationWarning（将来削除）
     return _SCT
 
 

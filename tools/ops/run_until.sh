@@ -134,17 +134,33 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
 
 # 接続状態を終了コードで返す。
 #   0 = 接続していてゲーム画面が見えている
-#   1 = 切断（iPhone をロックすれば自動復帰しうる。待つ価値がある）
+#   1 = 切断（窓が縦長＝ミラーリング切断ダイアログ。iPhone をロックすれば
+#       自動復帰しうる。待つ価値がある）
 #   2 = **Mac がロックされている**（人がロック解除するまで絶対に復帰しない）
+#   3 = 接続はあるが `detect()` が `menu`（画面を認識できない）
+#   4 = 接続判定そのものが例外で失敗した
 #
 # 2 を分けているのは実害があったため（2026-08-06）。ウィンドウが縦長かどうかだけで
 # 判定していた頃は、Mac ロック中も「ミラーリング切断中（iPhone をロックすると自動再接続）」
 # と**誤った復旧方法**をログに出し、直らない状態を延々と待ち続けていた。
 # ロック中はキャプチャに壁紙しか写らない（アプリのウィンドウが合成されない）ので、
 # 画面の見た目からは切断と区別できない。詳細は docs/device-findings.md。
+#
+# 3 と 4 も同じ理由（2026-10-20）。窓が横向きで接続していたのに detect() が
+# `menu`（フレンド選択を認識できず）を返し、「iPhone をロックすると自動再接続」と
+# 誤ログして待ち続けた。例外も `2>/dev/null` で捨てていたので原因が残らなかった。
+# 3 では未知画面のスクショを1枚保存してパスをログに出し、4 では例外メッセージを
+# ログに出す。どちらも「iPhone をロック」とは案内しない（復旧方法が違う）。
+
+# 判定中の Python 例外はここに残す（捨てない）。接続判定と同じく環境変数で差し替え可。
+CONN_ERR_FILE="${I7_CONN_ERR_FILE:-/tmp/i7_connected_err.txt}"
+# 認識できない画面のスクショ（毎回上書きで1枚だけ。E-6 の /tmp/i7dbg 肥大化を避ける）
+UNKNOWN_SHOT="${I7_UNKNOWN_SHOT:-/tmp/i7dbg/runner_unknown_screen.png}"
+
 connected() {
-  .venv/bin/python - <<'PY' 2>/dev/null
-import sys
+  : > "$CONN_ERR_FILE"
+  I7_UNKNOWN_SHOT="$UNKNOWN_SHOT" .venv/bin/python - <<'PY' 2>"$CONN_ERR_FILE"
+import os, sys
 sys.path.insert(0, "tools")
 try:
     import Quartz
@@ -161,10 +177,22 @@ try:
     al.content = (38, int(win["h"]) - 9)
     al.verbose = False
     al._last_dark_check = 0.0
-    state, _ = al.detect(driver.grab(win))
-    sys.exit(0 if state != "menu" else 1)
+    frame = driver.grab(win)
+    state, _ = al.detect(frame)
+    if state == "menu":
+        # 認識できない画面を1枚だけ保存して人が確認できるようにする
+        path = os.environ["I7_UNKNOWN_SHOT"]
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        from PIL import Image as _I
+        _I.fromarray(frame).save(path)
+        sys.exit(3)
+    sys.exit(0)
 except Exception:
-    sys.exit(1)
+    # 直前まで 2>/dev/null で捨てていて、落ちた理由がログに一切残らなかった。
+    # トレースバックは $CONN_ERR_FILE に全文残し、最終行（例外メッセージ）をログに出す。
+    import traceback
+    traceback.print_exc()
+    sys.exit(4)
 PY
 }
 
@@ -206,10 +234,25 @@ while :; do
         log "（iPhone をロックしても直りません。Mac のロックを解除してください）"
         waiting=2
       fi
-    else
+    elif (( conn == 1 )); then
+      # 「iPhone をロックすると自動再接続」はこのケース（縦長＝切断）だけに出す
       if (( waiting != 1 )); then
         log "ミラーリング切断中（iPhone をロックすると自動再接続）。復帰まで待機する"
         waiting=1
+      fi
+    elif (( conn == 3 )); then
+      if (( waiting != 3 )); then
+        # 接続はあるのに detect() が menu。supervisor は起動しない（未知画面を動かさない）
+        log "接続中・画面を認識できません（detect()=menu）。テンプレ未対応の画面の可能性。"
+        log "スクリーンショット: $UNKNOWN_SHOT（iPhone のロックでは直りません）"
+        waiting=3
+      fi
+    else
+      # 4 = 判定の Python 例外。その他の予期しない終了コードも同じ扱いにする
+      if (( waiting != 4 )); then
+        conn_err_detail=$(tail -1 "$CONN_ERR_FILE" 2>/dev/null)
+        log "接続判定でエラー（rc=${conn}）: ${conn_err_detail:-stderr 出力なし}"
+        waiting=4
       fi
     fi
     sleep 30

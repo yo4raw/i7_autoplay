@@ -21,7 +21,7 @@
 
 ```mermaid
 flowchart TD
-    R["run_until.sh<br/>指定時刻まで回す<br/>切断中は待機<br/>Macロックは解除を促す<br/>引数なしなら対話で設定"]
+    R["run_until.sh<br/>指定時刻まで回す<br/>切断・認識不能・判定エラーは待機<br/>Macロックは解除を促す<br/>引数なしなら対話で設定"]
     S["supervise_autolive.sh<br/>落ちたら再起動<br/>rc=42 なら再起動しない"]
     A["autolive.py<br/>画面認識と打鍵"]
     R -->|connected() が真なら起動| S
@@ -30,12 +30,17 @@ flowchart TD
     A -->|rc=42 安全停止| S
     S -->|安全停止/空転打ち切り| R
     R -->|接続あり＋要人手| STOP["runner 終了<br/>人間の確認待ち"]
-    R -->|接続なし| WAIT["30秒待機して再確認"]
+    R -->|周回を開始できない| WAIT["30秒待機して再確認"]
     WAIT --> R
 ```
 
-- `connected()` は「ウィンドウが横向き」かつ「`detect()` が `menu` 以外」を接続とみなす。
-  ゲームは常に横向きなので、**縦長＝ミラーリング切断ダイアログ**。
+- `connected()` は「ウィンドウが横向き」かつ「`detect()` が `menu` 以外」を接続
+  （終了コード 0）とみなす。ゲームは常に横向きなので、**縦長＝ミラーリング切断
+  ダイアログ**（終了コード 1）。横向きなのに `detect()` が `menu` のときは 3
+  （接続中だが画面を認識できない）、Mac がロックされていれば 2、判定中の例外は 4 を返す。
+  3 のときは画面を `/tmp/i7dbg/runner_unknown_screen.png` に1枚保存し、4 のときは
+  例外を `/tmp/i7_connected_err.txt` とログに残す。「iPhone をロックすると自動再接続」
+  と案内するのは終了コード 1 のときだけ。3・4 でも supervisor は起動せず待機する。
 - `--max-seconds` の時間上限では **`SAFE_EXIT_STATES`（リザルト系〜編成・LIFE 不足）でだけ抜ける**。
   ライブ中はもちろん、START 直後や LIFE 回復直後のローディング（判定は `menu`）でも抜けない
   （上限を `MAX_SECONDS_GRACE`=300 秒以上超えたら諦めて抜ける）。締め時刻で最後のライブを

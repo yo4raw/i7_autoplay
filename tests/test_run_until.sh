@@ -34,9 +34,13 @@ done
 export I7_RUNNER_LOG="$TMP/runner.log"
 export I7_SAFE_FLAG="$TMP/safe_fired"
 export I7_BARREN_FLAG="$TMP/barren_fired"
+# connected() が書く例外ファイルと未知画面スクショも本番と分ける
+export I7_CONN_ERR_FILE="$TMP/connected_err.txt"
+export I7_UNKNOWN_SHOT="$TMP/runner_unknown_screen.png"
 
 run_case() {
-  local name=$1 connected=$2 flag=$3 expect=$4
+  # deny を渡すと「expect が出る」に加えて「deny が出ない」ことも検査する
+  local name=$1 connected=$2 flag=$3 expect=$4 deny=${5:-}
   echo "$connected" > "$TMP/connected"
   rm -f "$I7_SAFE_FLAG" "$I7_BARREN_FLAG"
   # supervisor スタブ: 指定のフラグを立てて即座に戻る
@@ -60,6 +64,9 @@ EOS
   if grep -q "$expect" "$out"; then ok "$name"; else
     ng "$name（期待: $expect）"; sed 's/^/       /' "$out"
   fi
+  if [[ -n "$deny" ]] && grep -q "$deny" "$out"; then
+    ng "$name（出てはいけない: $deny）"
+  fi
 }
 
 echo "run_until.sh:"
@@ -74,8 +81,15 @@ run_case "正常時は目標時刻まで回る" 0 "" "target reached"
 # 5) Mac ロック（終了コード2）→ 待つだけでは直らないので、そう伝えること。
 #    以前はこの状態でも「iPhone をロックすると自動再接続」と誤った復旧方法を出し、
 #    直らない状態を延々と待ち続けていた（2026-08-06 実際に発生）。
-run_case "Macロック中は解除が要ると伝える" 2 "" "Mac がロックされています"
-# 6) その裏返し: ロック中に「iPhone をロック」と案内しないこと（誤誘導の回帰）
+run_case "Macロック中は解除が要ると伝える" 2 "" "Mac がロックされています" "iPhone をロックすると自動再接続"
+# 6) 接続中だが画面を認識できない（終了コード3）→ 切断ではないので
+#    「iPhone をロック」は案内せず、認識できないこととスクショの場所を伝える
+#    （2026-10-20: フレンド選択を detect()=menu と返し「切断中」と誤ログして待ち続けた）
+run_case "認識できない画面は切断と区別する" 3 "" "接続中・画面を認識できません" "iPhone をロックすると自動再接続"
+run_case "認識できない画面のスクショを案内する" 3 "" "runner_unknown_screen.png"
+# 7) 接続判定で例外（終了コード4）→ エラーをログに残す。再接続案内は出さない
+run_case "判定エラーは例外として記録する" 4 "" "接続判定でエラー" "iPhone をロックすると自動再接続"
+# 8) その裏返し: ロック中に「iPhone をロック」と案内しないこと（誤誘導の回帰）
 echo "2" > "$TMP/connected"
 rm -f "$I7_SAFE_FLAG" "$I7_BARREN_FLAG"
 ( cd "$TMP" && TMPDIR_STUB="$TMP" zsh tools/ops/run_until.sh $(( $(date +%s) + 3 )) \
@@ -106,7 +120,7 @@ irun() {  # irun <stdin文字列> <出力ファイル>  → 対話モードを�
 
 echo "run_until.sh (対話モード):"
 
-# 7) 引数なし・入力なし → usage を出して非ゼロ終了。
+# 9) 引数なし・入力なし → usage を出して非ゼロ終了。
 #    `nohup run_until.sh &`（引数なし）を黙ってハングさせないための歯止め。
 out="$TMP/i_nostdin.log"
 ( cd "$TMP" && TMPDIR_STUB="$TMP" PATH="$TMP/bin:$PATH" \
@@ -118,7 +132,7 @@ else
   ng "引数なしで入力が無ければ usage を出して落ちる（rc=$rc）"; sed 's/^/       /' "$out"
 fi
 
-# 8) 無期限＋「曲は触らない」を選び、確認で n → サマリは正しく、起動はしない
+# 10) 無期限＋「曲は触らない」を選び、確認で n → サマリは正しく、起動はしない
 out="$TMP/i_keep.log"
 irun '4\n1\nn\n' "$out"
 if grep -q "2592000秒" "$out" && grep -q -- "--keep-selection" "$out" \
@@ -128,7 +142,7 @@ else
   ng "選択内容をサマリに出し、確認で n なら起動しない"; sed 's/^/       /' "$out"
 fi
 
-# 9) 「曲を自動選択」を選んだら --keep-selection を付けないこと。
+# 11) 「曲を自動選択」を選んだら --keep-selection を付けないこと。
 #    ここを取り違えると、人が選んだ曲を勝手に選び直して LIFE を溶かす。
 out="$TMP/i_auto.log"
 irun '1\n2\nn\n' "$out"
@@ -138,7 +152,7 @@ else
   ng "曲を自動選択にしたら --keep-selection を付けない"; sed 's/^/       /' "$out"
 fi
 
-# 10) 多重起動を検出したら拒否する。2プロセスが同じ画面を叩き合うと制御を失う
+# 12) 多重起動を検出したら拒否する。2プロセスが同じ画面を叩き合うと制御を失う
 #     （docs/operations.md 起動前チェック A-1 の機械化）。
 echo "99999" > "$TMP/pgrep_out"
 out="$TMP/i_dup.log"
@@ -182,13 +196,13 @@ sup_case() {  # sup_case <name> <I7_TAP_EXTRA> <期待する文字列> <期待�
 }
 
 echo "supervise_autolive.sh:"
-# 11) I7_TAP_EXTRA が autolive の引数に載ること
+# 13) I7_TAP_EXTRA が autolive の引数に載ること
 sup_case "I7_TAP_EXTRA を autolive へ渡す" "--keep-selection" "--keep-selection" 1
-# 12) 既定の打鍵オプションを消さずに**追記**すること（既定はこのスクリプトが真実の情報源）
+# 14) 既定の打鍵オプションを消さずに**追記**すること（既定はこのスクリプトが真実の情報源）
 sup_case "既定の --green-hold を消さない" "--keep-selection" "--green-hold" 1
-# 13) 空なら余計なものは付かない
+# 15) 空なら余計なものは付かない
 sup_case "I7_TAP_EXTRA が空なら何も足さない" "" "--keep-selection" 0
-# 14) 本番のログに書いていないこと（テストが周回のログを汚さないための歯止め）
+# 16) 本番のログに書いていないこと（テストが周回のログを汚さないための歯止め）
 if [[ -s "$TMP/sup_sup.log" ]]; then
   ok "supervisor のログを差し替えられる"
 else

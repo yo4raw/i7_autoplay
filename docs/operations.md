@@ -91,7 +91,7 @@ lead をさらに詰める余地がある。効果は1ライブでは誤差（±
 | E-1 | `[warn]` の有無 | `grep "\[warn\]" /tmp/i7_autorun.log \| tail` | 0件 | 保存されたスクショ（`/tmp/i7dbg/*_*.png`）を見て原因を特定し、テンプレ資産化する |
 | E-2 | **空転していない** | `grep -c "完了: 0 回クリア" /tmp/i7_autorun.log` | 増えない | 増え続けるなら同じ画面で再起動を繰り返している（[screen-flow.md](screen-flow.md)「安全停止」参照） |
 | E-3 | クリアが進んでいる | `grep -c "★ライブ クリア" /tmp/i7_autorun.log` | 時間に比例して増える | 増えないのに supervisor が再起動していたら停止して調べる |
-| E-4 | **きなこパン回復の連続回数** | `grep "きなこパンで回復" /tmp/i7_autorun.log \| tail -3` | `（1回目, ステラ不使用）` が中心 | 回数が `MAX_LIFE_RECOVERS`=6 に近づいたら枯渇が近い。**枯渇すると安全停止する** |
+| E-4 | **きなこパン回復の個数と読み値** | `grep "きなこパン" /tmp/i7_autorun.log \| tail -3` | `きなこパンN個（数量欄 N を確認）で回復 … 回復量=30, LIFE=…, コスト=100` | 回復量・LIFE・コストが `None` なら OCR が読めていない（1 個ずつの回復に縮退する）。**枯渇すると安全停止する** |
 | E-5 | ミラーリング切断 | `tail /tmp/i7_runner.log` | `supervisor 起動` のまま | `ミラーリング切断中…待機する` なら iPhone をロックする |
 | E-6 | ディスク | `du -sh /tmp/i7dbg` | 肥大しない | デバッグスクショが溜まり続けるので適宜削除 |
 
@@ -113,7 +113,7 @@ lead をさらに詰める余地がある。効果は1ライブでは誤差（±
 | `STUCK_STOP_SEC` | 25.0秒 | 未知画面／閉じられないポップアップに滞留 | `[warn] 未知画面に Ns 停滞` ほか |
 | `RESULT_STUCK_SEC` | 30.0秒 | Result 送りが進まない | `[warn] Result送りが Ns 進まず停滞` |
 | `GAMEPLAY_TIMEOUT_SEC` | 240.0秒 | 暗い画面が続く（切断オーバーレイの誤認など） | `[warn] gameplay が Ns 継続` |
-| `MAX_LIFE_RECOVERS` | 6 | LIFE 不足が連続（きなこパン枯渇の可能性） | `[warn] LIFE不足が継続` |
+| `MAX_LIFE_NO_GAIN` | 3 | 「回復」を押しても現在 LIFE が増えない読みが続く（回復が効いていない） | `[warn] 「回復」を押しても現在 LIFE が増えない読みが 3 回続いた` |
 | `MIN_LIVE_SEC` | 20.0秒 | これ未満の gameplay はクリアに計上しない | — |
 
 ### 打鍵パラメータを変えるときの手順

@@ -862,8 +862,8 @@ def dialog_life_ocr(frame_rgb, row_pos):
     """LIFE 不足ダイアログ右上の「LIFE ♥ N」（現在 LIFE）を読む。読めなければ None。
 
     縦は行基準（ダイアログの上 0.15h 付近）、横はフレーム比で固定。ピルの白い
-    1 桁数字（「6」「0」）は素の OCR で落ちるので、読めなければ白文字二値化で
-    読み直す（実測 2026-10-20）。
+    1 桁数字（「6」）は素の OCR で落ちるので、読めなければ白文字二値化で読み直す。
+    「0」は二値化しても読めない（実測 2026-10-20）→ None（呼び出し側は n=1 に縮退）。
     """
     h, w = frame_rgb.shape[:2]
     y0 = max(0, int(row_pos[1] - 0.155 * h))
@@ -884,9 +884,12 @@ def dialog_life_ocr(frame_rgb, row_pos):
     return int(nums[-1].translate(_ZEN_DIGITS))
 
 
-# フレンド選択・編成画面の上部「♥-N」コストバッジの切り出し（フレーム比。
-# 実測 656x341: y 70..95 → 0.205..0.279、x 380..440 → 0.579..0.671）。
-_COST_BADGE_BOX = (0.205, 0.279, 0.579, 0.671)
+# フレンド選択・編成画面の上部「♥-N」コストバッジを探す帯（フレーム比 y0, y1, x0, x1）。
+# バッジの位置は画面・窓サイズで変わる（656x341 フレンド選択 y≈0.24, x≈0.62 /
+# 529x334 編成・フレンド選択 y≈0.33, x≈0.69）ので、両方を含む帯で読む。
+# 2026-10-20 実測: この帯で 656 の 1 枚は "-100"、コーパス 529 の編成 4 枚・フレンド選択 4 枚は
+# すべて "-5"。数字の前に "-" がある語は帯内にこのバッジしか無かった。
+_COST_BADGE_BOX = (0.15, 0.42, 0.55, 0.85)
 
 
 def life_cost_ocr(frame_rgb):
@@ -898,7 +901,7 @@ def life_cost_ocr(frame_rgb):
     sub = np.ascontiguousarray(
         frame_rgb[int(fy0 * h):int(fy1 * h), int(fx0 * w):int(fx1 * w)])
     for text in ocr.recognize_texts(sub):
-        m = re.search(r"-\s*(\d+)", text.translate(_ZEN_DIGITS))
+        m = re.search(r"[-−]\s*(\d+)", text.translate(_ZEN_DIGITS))
         if m:
             return int(m.group(1))
     return None
@@ -2808,7 +2811,7 @@ class AutoLive:
                     self.life_unsettled = 0
                 else:
                     # 「回復」を押していない（ダイアログが消えた／行を確かめ切れなかった）。
-                    # **きなこ枯渇の判定（MAX_LIFE_RECOVERS）には数えない。**
+                    # **枯渇の判定（MAX_LIFE_NO_GAIN）には数えない。**
                     self.life_recovers -= 1
                 if status == "unsettled":
                     # 何もクリックしていないか、「+」だけ押した（「+」は1ダイアログ1回まで）。

@@ -602,7 +602,11 @@ class TestLifeRecoverOcr(unittest.TestCase):
                 self.assertEqual(30, got)
 
     def test_current_life_on_all_kinako_fixtures(self):
-        """現在 LIFE が読める（実測値。1桁の「6」「0」は白文字二値化で読む）。"""
+        """現在 LIFE が読める（実測値。1桁の「6」は白文字二値化で読む）。
+
+        「0」は Vision が読めない（2026-10-20 実測、二値化しても None）。読めないときの
+        _recover_life は n=1 に縮退するので安全側。枯渇フレームはきなこ行が消えており
+        LIFE を読む段階に来ないので、ここでは対象にしない。"""
         expected = {"lifeshort_kinako_kyomei_671x348.png": 20,
                     "lifeshort_kinako_qty3_671x348.png": 27,
                     "lifeshort_kinako_qty7_671x348.png": 27,
@@ -610,11 +614,10 @@ class TestLifeRecoverOcr(unittest.TestCase):
                     "lifeshort_kinako_overcap_671x348.png": 71,
                     "lifeshort_kinako_banner_671x348.png": 27,
                     "lifeshort_kinako_11th_671x348.png": 14,
-                    "lifeshort_kinako_present_671x348.png": 6,
-                    "lifeshort_kinako_depleted_529x334.png": 0}
+                    "lifeshort_kinako_present_671x348.png": 6}
         for name, want in expected.items():
             with self.subTest(frame=name):
-                pos = self._row_pos(name) if "depleted" not in name else (254.0, 268.5)
+                pos = self._row_pos(name)
                 got = AL.dialog_life_ocr(load_rgb(name), pos)
                 self.assertEqual(want, got)
 
@@ -640,10 +643,18 @@ class TestLifeRecoverOcr(unittest.TestCase):
                 self.assertIsNotNone(plus)
                 self.assertEqual(want, AL.kinako_qty_ocr(fr, plus))
 
-    def test_cost_badge_on_friendselect(self):
-        """フレンド選択の上部バッジ「♥-100」からコスト 100 を読む（切り出しは
-        フレーム比 y0.205..0.279・x0.579..0.671。実測 656x341 で 70:95,380:440）。"""
+    def test_cost_badge_on_friendselect_and_formation(self):
+        """上部バッジ「♥-N」からコストを読む。バッジの位置は画面と窓サイズで変わる
+        （656x341 フレンド選択は y≈0.24、529x334 編成は y≈0.33）。片方だけに合わせた
+        切り出しだと、もう片方で黙って None になり KINAKO_ASSUMED_COST(100) に縮退する
+        （3倍ブーストの -5/-15 イベントで 20 倍のパンを使う）。"""
         self.assertEqual(100, AL.life_cost_ocr(load_rgb("friendselect_656x341.png")))
+        self.assertEqual(5, AL.life_cost_ocr(load_rgb("formation_cost5_529x334.png")))
+
+    def test_cost_badge_absent_reads_none(self):
+        """バッジの無い画面ではコストを読まない（LIFE 不足ダイアログの「LIFE 30 回復」等を
+        コストと取り違えない）。"""
+        self.assertIsNone(AL.life_cost_ocr(load_rgb("lifeshort_kinako_qty3_671x348.png")))
 
 
 class TestRecoverCountFromOcr(unittest.TestCase):
@@ -682,27 +693,28 @@ class TestRecoverCountFromOcr(unittest.TestCase):
         self.assertEqual(1, len(al.clicks), "「回復」以外を押した")
 
     def test_small_per_pan_needs_many_recovers_no_depleted_stop(self):
-        """回復量 5・コスト 100 → n=10（不足分を積む）。LIFE が増える限り
-        何回でも回復し、旧 MAX_LIFE_RECOVERS(6) 相当では止まらない。"""
+        """回復量 5・コスト 100。LIFE が少しずつ増える限り、旧 MAX_LIFE_RECOVERS(6) を
+        超えて何回でも回復し、毎回 n=ceil((100−LIFE)/5) 個を使う。
+        （フィクスチャの数量 10 のフレームは「上限を超えています」バッジ付きなので、
+        n ≤ 9 に収まる LIFE で回す。）"""
         fr = load_rgb(KYOMEI)
-        al = _FakeLive([fr], per_pan=5, life=[20, 70, 20] * 4, life_cost=100)
-        for i in range(8):
+        lives = [60, 65, 70, 75, 80, 85, 90, 95]
+        al = _FakeLive([fr], per_pan=5, life=lives, life_cost=100)
+        for i, life in enumerate(lives):
             al.qty = 1
             status, _, _ = al._recover_life(fr)
             self.assertEqual("recovered", status, f"{i+1}回目で止まった")
-            self.assertEqual(10, al.recover_qty)
-        self.assertNotEqual("life_no_gain", status)
+            self.assertEqual(-(-(100 - life) // 5), al.recover_qty, f"{i+1}回目 LIFE={life}")
 
     def test_no_gain_stops_after_max(self):
         """「回復」を押しても現在 LIFE が増えない読みが MAX_LIFE_NO_GAIN 回続くと
-        life_no_gain（**その呼び出しでは何も押さない**）。"""
+        life_no_gain（**その呼び出しでは何も押さない**）。最初のダイアログには比較元が
+        無いので、増えない読みが MAX 回たまるのは MAX+1 回目の呼び出し。"""
         fr = load_rgb(KYOMEI)
         al = _FakeLive([fr], per_pan=30, life=20, life_cost=100)
-        statuses = [al._recover_life(fr)[0] for _ in range(AL.MAX_LIFE_NO_GAIN)]
+        statuses = [al._recover_life(fr)[0] for _ in range(AL.MAX_LIFE_NO_GAIN + 1)]
         self.assertEqual("life_no_gain", statuses[-1])
-        self.assertEqual("recovered", statuses[0])
-        # 全呼び出しで回復は MAX_LIFE_NO_GAIN-1 回まで（最後は押していない）
-        self.assertLessEqual(statuses.count("recovered"), AL.MAX_LIFE_NO_GAIN - 1)
+        self.assertEqual(["recovered"] * AL.MAX_LIFE_NO_GAIN, statuses[:-1])
 
     def test_unreadable_values_fall_back_to_one_pan(self):
         """回復量・現在 LIFE が読めないときは n=1（従来の1個回復相当）。"""

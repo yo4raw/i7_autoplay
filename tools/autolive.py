@@ -255,14 +255,24 @@ HOLD_MAX_SEC = 8.0               # 1ホールドの最大保持秒（誤検出�
                                  # --hold-max-sec で上書き可。
 HOLD_REL_FACTOR = 0.45           # 保持解除のしきい（trigger×これ を下回ったら離す＝ヒステリシス）
 
-# --- ライブ品質の自己診断（2026-08-06 実測）---
-# 通常は 184ノーツに対し **約370打鍵（ノーツあたり約2打鍵）/ 判定約4550フレーム**。
-# 異常ライブでは打鍵が落ち、**打鍵不足 ÷ 2 が MISS の超過とほぼ一致する**
-# （打鍵236→MISS 69 / 打鍵212→MISS 76 に対し、正常は打鍵約370→MISS 4〜8）。
-# supervisor は「クリアしたか」しか見ないので、ここで警告を出さないと成績が半分でも
-# 気づかずに回り続ける。詳細は docs/device-findings.md「実機A/B」。
-TAPS_LOW = 330      # これ未満＝打鍵していない区間があった（大量 MISS）
-TAPS_DOUBLE = 600   # これ超＝リザルト見逃しで2ライブぶんを1クリアとして走った
+# --- ライブ品質の自己診断（曲・難易度に依存しない指標。2026-10-20） ---
+# 旧来は打鍵回数の閾値（Don't Analyze Me/EASY・184ノーツ≈370打鍵を基準にした 330/600）
+# で異常ライブを警告していたが、曲・難易度が変わると意味を持たない（ノーツ数も
+# 打鍵数も曲ごとに違う。10倍イベントの EXPERT+ では警告が無意味だった）。
+# 代わりに、曲に依存しない2つの指標でライブ終了時に警告する:
+# - ライブ中のループ周波数: 判定フレーム ÷ gameplay/pause に費やした秒。
+#   低下するとノーツ到達検出の時間分解能が足りず MISS が増える。
+# - gameplay/pause の継続秒: リザルトを見逃して2ライブが1クリアに連結した検出用
+#   （旧「打鍵>600」相当を時間で判定する）。
+LIVE_FPS_WARN = 25.0        # ライブ中ループ周波数の下限。正常は 26〜37（実測は
+                          # docs/device-findings.md）。これ未満＝判定がノーツに追いついていない
+LIVE_MERGED_WARN_SEC = 190.0  # gameplay/pause 継続秒の警告線。1ライブは ≈110〜125秒
+                          # （PAUSE解決後、GAMEPLAY_TIMEOUT_SEC の注記参照）に PAUSE 1回分
+                          # （≦PAUSE_STUCK_SEC=60）を足しても ≈185秒まで。それを超える
+                          # gameplay/pause 累積はリザルトを通らず2ライブ走った可能性を疑う。
+                          # 連結が gameplay のまま続くと 240 秒で gameplay_timeout が先に
+                          # 止めるので、警告が出るのは「合計 190〜240 秒の連結」か
+                          # 「間に画面遷移を挟んで gameplay_since が切れた連結」。
 
 # --- 打鍵の着弾点ジッター ---
 # 着弾点が毎回まったく同じ4点だと散らばりが厳密ゼロになり、統計的に人間と即座に区別できる。
@@ -1050,8 +1060,21 @@ class AutoLive:
         self.autocal_samples = []         # 多数決用に貯める検出サンプル（content相対）
         self.stop_reason = None           # 安全停止の理由（None=正常終了）。終了コードに反映する
         self._last_win_check = 0.0        # ウィンドウ矩形を最後に取り直した時刻
-        # ライブ1回ぶんのループ内訳（打鍵の時間分解能を上げる余地を探すため）
-        self._prof = {"grab": 0.0, "detect": 0.0, "act": 0.0}
+        # ループ内訳を「ライブ中（gameplay/pause）」と「それ以外」に分けて集計する。
+        # 旧来は1つのバケットに混ぜていたため、ライブ後のメニュー画面（明るい側の
+        # 全段照合≈1秒/フレーム）が混ざり、ライブ中だけの内訳が分からなかった
+        # （2026-10-20 の約16FPS 原因調査用）。sec はそのバケットの状態に費やした
+        # 実時間（イテレーション周期の和）で、ライブ中FPSの分母と「2ライブ連結」
+        # 警告（LIVE_MERGED_WARN_SEC）に使う。
+        self._prof = {"live": {"grab": 0.0, "detect": 0.0, "act": 0.0, "sec": 0.0},
+                      "other": {"grab": 0.0, "detect": 0.0, "act": 0.0, "sec": 0.0}}
+        # detect() がフレームをどの経路で処理したかのカウンタ（ライブ終了時に
+        # _live_report で吐いてリセット）。経路: dark(暗い)/dim_rings(薄暗い＋
+        # リング確認)/bright(明るい側の全段照合)/recheck(間引き照合が走った)/
+        # rescue(救済照合を投げた)。__new__ 生成のインスタンスでは存在しない
+        # ことがあるので、加算は _detect_path() 経由（getattr 保護）。
+        self._detect_paths = {}
+        self._iter_t0 = time.time()  # _prof へ按分するイテレーション開始時刻
         self.suppress_cardx_until = 0.0   # この時刻までは cardx を無視（フレンド選択直後）
         self.tap_count = 0                # 1ライブ中の打鍵回数（検出不足か位置ズレかの切り分け用）
         self.frame_count = 0              # 1ライブ中の判定フレーム数（実効ループ周波数の把握）
@@ -1941,6 +1964,57 @@ class AutoLive:
         print(f"[{el:6.1f}s][clear {self.loops_done}/{self.max_loops}] {msg}",
               flush=True)
 
+    def _detect_path(self, name):
+        """detect() がフレームを処理した経路を数える（ライブ終了ログ用）。
+
+        __new__ 生成のインスタンス（result_log・各種テスト）では _detect_paths が
+        無いので getattr で保護する。
+        """
+        paths = getattr(self, "_detect_paths", None)
+        if paths is not None:
+            paths[name] = paths.get(name, 0) + 1
+
+    def _prof_bucket(self, state):
+        """ループ内訳の振り分け先: gameplay/pause → "live"、それ以外 → "other"。
+
+        「ライブ中だけの取得/判定/打鍵時間」を出すための境界。明るい画面への
+        誤判定や曲間のメニューは other 側へ流れ、live 側を汚さない。
+        """
+        return self._prof["live"] if state in ("gameplay", "pause") else self._prof["other"]
+
+    def _live_report(self):
+        """クリア計上時に1ライブぶんの計測をログへ出し、カウンタをリセットする。
+
+        警告は曲・難易度に依存しない2指標（LIVE_FPS_WARN / LIVE_MERGED_WARN_SEC の
+        コメント参照）。旧来の打鍵回数閾値（330/600）は曲ごとにノーツ数が違うので廃止。
+        """
+        live = self._prof["live"]
+        oth = self._prof["other"]
+        live_sec = live["sec"]
+        fps = self.frame_count / live_sec if live_sec > 0 else 0.0
+        paths = getattr(self, "_detect_paths", {}) or {}
+        self.log(f"ライブ内訳 打鍵{self.tap_count}回 / 判定{self.frame_count}フレーム"
+                 f" / FPS {fps:.1f} (gameplay/pause {live_sec:.0f}s)"
+                 f" [取得{live['grab']:.0f}s 判定{live['detect']:.0f}s 打鍵{live['act']:.0f}s]"
+                 f"  他[取得{oth['grab']:.0f}s 判定{oth['detect']:.0f}s 打鍵{oth['act']:.0f}s]"
+                 f"  経路[暗{paths.get('dark', 0)} 薄暗+輪{paths.get('dim_rings', 0)}"
+                 f" 明{paths.get('bright', 0)} 再照合{paths.get('recheck', 0)}"
+                 f" 救済{paths.get('rescue', 0)}]")
+        if live_sec > LIVE_MERGED_WARN_SEC:
+            self.log(f"[warn] gameplay/pause が {live_sec:.0f}s 続いた"
+                     f"（1ライブ長≈110-125s+PAUSE の上限≈{LIVE_MERGED_WARN_SEC:.0f}s超）→"
+                     " リザルトを見逃して2ライブ連結した可能性"
+                     "（長い PAUSE の繰り返しでも起こりうる）")
+        if self.frame_count and live_sec >= MIN_LIVE_SEC and fps < LIVE_FPS_WARN:
+            self.log(f"[warn] ライブ中ループ {fps:.1f} FPS < {LIVE_FPS_WARN:.0f} →"
+                     " 判定がノーツに追いついていない（打鍵の時間分解能不足。"
+                     " 内訳の[判定]と経路[明/再照合]を見て原因を特定する）")
+        self._prof = {"live": {"grab": 0.0, "detect": 0.0, "act": 0.0, "sec": 0.0},
+                      "other": {"grab": 0.0, "detect": 0.0, "act": 0.0, "sec": 0.0}}
+        self._detect_paths = {}
+        self.tap_count = 0
+        self.frame_count = 0
+
     def detect(self, frame_rgb):
         """明るさゲート + テンプレ照合で状態を返す。
 
@@ -1995,7 +2069,18 @@ class AutoLive:
         # リングが見えている＝ライブ中なので、暗い側の救済照合（songselect/dailytask/eventresult）も
         # 省ける（PAUSE 照合だけは常に行う）。実測: 薄暗いライブでは救済 3 件が 0.7 秒ごとに 93ms
         # かかり判定フレームが 3500 → 3100 に落ちていた。
-        rings = bright > 50.0 and self._rings_visible(frame_rgb)
+        # リング評価は遅延させる: 必要なのは「薄暗いフレームのライブ判定」（65≦b<90）
+        # と暗い側の「救済照合が要るか」（50<b<65 かつリング無し）だけ。旧コードは
+        # b>50 の全フレーム（明るいメニュー全てを含む）で _rings_visible の全画面
+        # スキャン（実測 2〜3ms）を行っていた。明るい側では値自体が不要なので計算しない。
+        # rings は評価後「None=未評価 / True / False」。薄暗い側に入ったなら True。
+        rings = None
+        if bright < DARK_THRESH:
+            self._detect_path("dark")
+        elif bright < DIM_THRESH and (rings := self._rings_visible(frame_rgb)):
+            self._detect_path("dim_rings")
+        else:
+            self._detect_path("bright")
         if bright < DARK_THRESH or (bright < DIM_THRESH and rings):
             # 暗い＝gameplay or PAUSE(暗背景)。**打鍵タイミング精度のため、重い pause/songselect
             # 照合は毎フレームせず DARK_RECHECK_SEC おきに間引く**（PAUSE・暗いsongselectは
@@ -2006,6 +2091,7 @@ class AutoLive:
             now_t = time.time()
             if now_t - self._last_dark_check >= DARK_RECHECK_SEC:
                 self._last_dark_check = now_t
+                self._detect_path("recheck")
                 # **暗い側の救済照合はすべて範囲限定で行う。** 全画面照合のままだと、
                 # ウィンドウ上端の透過部に明るい別ウィンドウが写り込んで輝度が 50 を超えた
                 # だけで、0.7 秒ごとの再照合が 26ms → 297ms に跳ね、ライブ中のループ時間の
@@ -2019,8 +2105,13 @@ class AutoLive:
                 }
                 # 救済照合が要るのは「暗めだが真っ暗ではなくリングも見えない」フレームだけ。
                 # 真っ暗（bright≤50）やリング確認済みの gameplay では投げない（無駄なCPUを避ける）。
+                # 暗い側ではリングをまだ評価していない（上の遅延評価参照）。真っ暗（bright≤50）では
+                # 救済しないので評価自体を省く（旧コードの短絡評価と同じ）。
+                if rings is None and bright > 50.0:
+                    rings = self._rings_visible(frame_rgb)
                 need_rescue = bright > 50.0 and not rings
                 if need_rescue:
+                    self._detect_path("rescue")
                     for _k, _box in DARK_RESCUE_KEYS:
                         dark_pending[_k] = _pool.submit(
                             match_in_box, frame_bgr(), self.templates[_k][0], _box)
@@ -2045,7 +2136,7 @@ class AutoLive:
                 # iOS のシステムダイアログ（iMessage/FaceTime 有効化確認）は画面を暗転させ
                 # mean≈64 < DARK_THRESH に落ちる（実測 2026-09-16 07:39、編成画面の上）。
                 # gameplay 扱いのままだと 240 秒で gameplay_timeout 停止 → runner 終了になる。
-                if bright > 50.0 and not rings:
+                if need_rescue:
                     if dark_match("songselect"):
                         return "songselect", res
                     if dark_match("dailytask"):
@@ -2535,6 +2626,7 @@ class AutoLive:
 
     def _loop(self):
         while self.loops_done < self.max_loops:
+            self._iter_t0 = time.time()
             # ESC キルスイッチ（長押し）。グローバル検出ゆえ他アプリ向けの ESC タップを拾う
             # ため、ESC を ESC_HOLD_SEC 秒**押し続けた**ときだけ停止する（短タップは無視）。
             # --no-esc 指定時はキルスイッチ無効（自律実行用。停止は pkill）。
@@ -2550,7 +2642,7 @@ class AutoLive:
             self._refresh_window()
             _t = time.time()
             frame = driver.grab(self.win)
-            self._prof["grab"] += time.time() - _t
+            _grab_dt = time.time() - _t
             _t = time.time()
             # 内容矩形は固定 (TITLEBAR_ROWS, h-9)。以前は暗い行から毎フレーム検出していたが、
             # ウィンドウ上端の透過部に写り込む背後のウィンドウの明暗で上端が 0 ⇔ 38、下端が
@@ -2564,7 +2656,13 @@ class AutoLive:
             # 一時的なエラーが何度も起きうるので、通算ではなく連続で数える）。
             if state != "neterror":
                 self.net_retries = 0
-            self._prof["detect"] += time.time() - _t
+            _detect_dt = time.time() - _t
+            # 内訳は「ライブ中（gameplay/pause）」と「それ以外」に分けて積む。
+            # ライブ中だけの FPS・時間配分を出すため（ライブ後のメニュー画面の
+            # 全段照合≈1秒/フレームが混ざるとライブ中の値が読めない）。
+            _bucket = self._prof_bucket(state)
+            _bucket["grab"] += _grab_dt
+            _bucket["detect"] += _detect_dt
             _t = time.time()
             if self.max_seconds and time.time() - self.t_start > self.max_seconds:
                 # ライブの途中では止めない（CLAUDE.md「ライブの途中で autolive を止めないこと」）。
@@ -2723,6 +2821,7 @@ class AutoLive:
                     self.was_in_live = False
                     self.starts_since_clear = 0
                     self.log(f"★ライブ クリア（通算 {self.loops_done}）")
+                    self._live_report()
                 # 実際には連続ライブ「同じライブを同じ条件で再プレイしますか？」の**はい**
                 # （friendreq_yes がピンクの「はい」に 0.86 で当たる。2026-10-11 実測）。
                 # はいの直後に出る LIFE 不足ダイアログでは、この位置の **6px 上がステラ行の
@@ -2749,6 +2848,7 @@ class AutoLive:
                     self.was_in_live = False
                     self.starts_since_clear = 0
                     self.log(f"★ライブ クリア（通算 {self.loops_done}）")
+                    self._live_report()
                 self.log("連続ライブ 再プレイ → はい")
                 self.click_anchor(res["replay"][2], ANCH_REPLAY_YES)  # マッチ位置+オフセット（画像追従）
                 time.sleep(0.9)   # 再プレイ「はい」→ライブ開始まで。詰めすぎると二度押し
@@ -3087,19 +3187,11 @@ class AutoLive:
                     self.was_in_live = False
                     self.starts_since_clear = 0
                     self.log(f"★ライブ クリア（通算 {self.loops_done}）"
-                             f" 打鍵{self.tap_count}回 / 判定{self.frame_count}フレーム"
-                             + (f" [取得{self._prof['grab']:.0f}s 判定{self._prof['detect']:.0f}s "
-                                f"打鍵{self._prof['act']:.0f}s]" if self.frame_count else ""))
-                    if self.tap_count > TAPS_DOUBLE:
-                        self.log(f"[warn] 打鍵{self.tap_count}回は通常の約2倍 →"
-                                 " リザルトを見逃して2ライブ連続で走った可能性")
-                    elif self.tap_count < TAPS_LOW:
-                        self.log(f"[warn] 打鍵{self.tap_count}回は通常(約370)より"
-                                 f"{370 - self.tap_count}回少ない →"
-                                 f" MISS が約{4 + (370 - self.tap_count) // 2}に増えている見込み")
-                    self._prof = {"grab": 0.0, "detect": 0.0, "act": 0.0}
-                    self.tap_count = 0
-                    self.frame_count = 0
+                             f" 打鍵{self.tap_count}回 / 判定{self.frame_count}フレーム")
+                    # ライブ中だけの内訳・FPS・経路と、曲非依存の警告を出して
+                    # カウンタをリセットする（警告の指標は LIVE_FPS_WARN /
+                    # LIVE_MERGED_WARN_SEC のコメント参照）。
+                    self._live_report()
                     self.result_since = None  # クリア計上＝進捗。停滞タイマーをリセット
                 # 想定外オーバーレイ（iOSシステムダイアログ等）で result 誤判定→中央タップが
                 # 効かず無限ループするのを検知して停止（スクショ保存）。
@@ -3156,7 +3248,9 @@ class AutoLive:
                              "loginbonus", "speciallogin"):
                 self.menu_since = None
             # result/eventresult を抜けたら（=進捗）Result停滞タイマーをリセット。
-            self._prof["act"] += time.time() - _t
+            _act_dt = time.time() - _t
+            _bucket["act"] += _act_dt
+            _bucket["sec"] += time.time() - self._iter_t0
             if state not in ("result", "eventresult"):
                 self.result_since = None
             if state not in ("result", "eventresult", "expresult"):

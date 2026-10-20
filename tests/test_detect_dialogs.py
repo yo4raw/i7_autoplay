@@ -467,7 +467,7 @@ class _FakeLive656(LRS._FakeLive):
 
     親の数量シミュレーション（ステッパー座標・フレーム選択）は 671x348 の実測値に
     固定されているため、656 用に両方を持ち替える。撮影は数量 1 → 「+」後は数量 3
-    の実フレームを返す。
+    の実フレームを返す（数量・回復量・LIFE の読みは親のスタブで与える）。
     """
 
     QTY_FRAMES_656 = {1: "lifeshort_kinako_qty1_656x341.png",
@@ -524,23 +524,26 @@ class TestRecoverLifeShrunkenWindow(unittest.TestCase):
         self.assertTrue(kx0 <= x <= kx1 and ky0 <= y <= ky1,
                         f"最後のクリック ({x:.0f},{y:.0f}) がきなこ「回復」の外")
 
-    def test_recover_at_qty3_656(self):
-        """数量欄が「3」の 656 フレームでは、そのまま「回復」だけを押す。"""
+    def test_recover_one_pan_when_life_covers_most_656(self):
+        """回復量 30・現在 LIFE 97・コスト 100 → n=1（値の OCR は test_life_recover_safety で固定）。
+        数量欄 1 のまま「回復」だけを押し、ステラ行には届かない。"""
         fr = load_rgb("lifeshort_kinako_qty3_656x341.png")
-        al = _FakeLive656([fr])
+        al = _FakeLive656([fr], qty=1, per_pan=30, life=97, life_cost=100)
         status, _, _ = al._recover_life(fr)
         self.assertEqual("recovered", status)
+        self.assertEqual(1, al.recover_qty)
         self.assertEqual(1, len(al.clicks), al.clicks)
         self._assert_only_kinako_clicks(al.clicks)
 
-    def test_recover_at_qty1_plus_twice_656(self):
-        """数量欄が「1」の 656 フレームでは「+」×2 → 数量 3 で「回復」。"""
+    def test_recover_two_pans_656(self):
+        """回復量 30・現在 LIFE 50・コスト 100 → n=2。数量 1 から「+」1 回 → 数量 2 で
+        「回復」。656 の座標でも押す点はすべてきなこ行の中。"""
         fr = load_rgb("lifeshort_kinako_qty1_656x341.png")
-        al = _FakeLive656([fr], qty=1)
+        al = _FakeLive656([fr], qty=1, per_pan=30, life=50, life_cost=100)
         status, _, _ = al._recover_life(fr)
         self.assertEqual("recovered", status)
-        self.assertEqual(3, al.recover_qty, "数量 3 で「回復」を押していない")
-        self.assertEqual(3, len(al.clicks), al.clicks)   # 「+」×2 + 「回復」
+        self.assertEqual(2, al.recover_qty, "数量 2 で「回復」を押していない")
+        self.assertEqual(2, len(al.clicks), al.clicks)   # 「+」×1 + 「回復」
         self._assert_only_kinako_clicks(al.clicks)
 
     def test_kinako_row_found_and_point_on_656(self):

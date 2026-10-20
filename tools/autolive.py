@@ -559,7 +559,17 @@ BRIGHT_KEYS = (
 # 各ディレクトリ2枚だけ見て起きた）。
 # 歯止め: tests/test_dark_detect_perf.py（PAUSE の取りこぼし）と
 #         tests/test_corpus_smoke.py::TestCorpusStatesUnchanged（実フレームの判定固定）。
+#
+# 照合時はこの各段に**窓スケール係数** `window_scale(frame)` を掛けて使う（ミラーリング窓が
+# 基準寸法から数%縮むと、どの段でも約2%ずれたまま閾値を割る。実測 2026-10-20: 671x348 →
+# 656x341 に縮み、friendselect 0.844 / lifefull 0.669 で周回が停止した）。
 SCALES = [0.8, 0.93, 1.0, 1.08]
+# 窓スケール係数の基準幅（px）。縦横比 > WIDE_ASPECT_MIN なら iPhone 16 系クラス、
+# それ以外は SE クラスとみなす。フレームがちょうど基準幅なら s=1.0 で照合結果は
+# 従来とビット単位で同じになる（段数も増えない）。
+WIDE_REF_W = 671
+SE_REF_W = 529
+WIDE_ASPECT_MIN = 1.75
 # 明るさ閾値: これ未満ならライブ中（暗い画面）
 DARK_THRESH = 65.0
 # 明るさゲートの計測条件を固定するための「上端 38 行の置換値」。
@@ -672,11 +682,37 @@ def load_templates():
     return out
 
 
-def match_best(frame_bgr, imgs):
-    """複数テンプレ候補(端末別variant)のうち最良の (score, center_px) を返す。"""
+def window_scale_wh(w, h):
+    """幅 w・高さ h の**全体フレーム**の窓スケール係数を返す。
+
+    テンプレは 671x348（iPhone 16 系）と 529x334（SE）の等倍で切り出されている。
+    ミラーリング窓は少しずつ縮むことがある（実測 671x348 → 665x345 → 660x343 → 656x341、
+    .autocal_circles.json の履歴）。そのとき UI 全体が同じ率で縮むので、SCALES の各段に
+    この係数を掛けて照合する。基準サイズのフレームではちょうど 1.0 を返す。
+    """
+    ref = WIDE_REF_W if (h > 0 and w / h > WIDE_ASPECT_MIN) else SE_REF_W
+    if w == ref:
+        return 1.0
+    return w / ref
+
+
+def window_scale(frame):
+    """全体フレーム（BGR/RGB どちらでも可）の窓スケール係数。"""
+    h, w = frame.shape[:2]
+    return window_scale_wh(w, h)
+
+
+def match_best(frame_bgr, imgs, scale=None):
+    """複数テンプレ候補(端末別variant)のうち最良の (score, center_px) を返す。
+
+    `frame_bgr` は**必ず全体フレーム**を渡す（窓スケール係数はその幅から求める。
+    切り出しで照合するときは match_in_box を使うこと）。切り出し画像を渡すときは
+    `scale` に全体フレームから求めた係数を明示する。"""
+    if scale is None:
+        scale = window_scale(frame_bgr)
     best = (0.0, None)
     for im in imgs:
-        score, pos = match_multiscale(frame_bgr, im)
+        score, pos = match_multiscale(frame_bgr, im, scale)
         if score > best[0]:
             best = (score, pos)
     return best
@@ -703,6 +739,8 @@ def kinako_recover_point(frame_rgb, row_pos):
     候補は「きなこパン行と同じ高さ・ラベルより右にある横長のピンク矩形」に限る。
     見つからなければ従来の固定オフセットへフォールバックする（行の実在は確認済みなので、
     フォールバック先も必ずきなこパン行の中に収まり、ステラ行には届かない）。
+    フォールバックのオフセットには窓スケール係数を掛ける（窓が基準幅から縮むと
+    UI 全体も同じ率で縮む。実測 2026-10-20: 656x341 では約 6px のずれ）。
     """
     h, w = frame_rgb.shape[:2]
     R = frame_rgb[:, :, 0].astype(int)
@@ -725,7 +763,9 @@ def kinako_recover_point(frame_rgb, row_pos):
             best = (d, (cx, cy))
     if best is not None:
         return best[1]
-    return (row_pos[0] + ANCH_KINAKO_ROW[0], row_pos[1] + ANCH_KINAKO_ROW[1])
+    s = window_scale(frame_rgb)
+    return (row_pos[0] + ANCH_KINAKO_ROW[0] * s,
+            row_pos[1] + ANCH_KINAKO_ROW[1] * s)
 
 
 def kinako_plus_point(frame_rgb, recover_pt):
@@ -924,11 +964,19 @@ def detect_card_x(frame_rgb):
 
 
 
-def match_multiscale(frame_bgr, templ):
-    """マルチスケールでテンプレ照合。最大スコアと一致中心(ピクセル)を返す。"""
+def match_multiscale(frame_bgr, templ, scale=None):
+    """マルチスケールでテンプレ照合。最大スコアと一致中心(ピクセル)を返す。
+
+    照合段は SCALES の各段 × 窓スケール係数。`scale` 未指定なら渡された
+    **全体フレーム**の幅から求める（`frame_bgr` は必ず全体フレームを渡すこと。
+    切り出しの照合は match_in_box を使う）。
+    """
+    if scale is None:
+        scale = window_scale(frame_bgr)
     fh, fw = frame_bgr.shape[:2]
     best = (0.0, None)
-    for s in SCALES:
+    for base in SCALES:
+        s = base * scale
         t = templ
         if s != 1.0:
             t = cv2.resize(templ, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
@@ -942,35 +990,44 @@ def match_multiscale(frame_bgr, templ):
     return best
 
 
-def match_in_box(frame_bgr, imgs, box):
+def match_in_box(frame_bgr, imgs, box, scale=None):
     """フレームの一部だけを照合して (score, 全画面座標の中心) を返す。
 
     フレーム全体のマルチスケール照合は重く（実測 246ms/回）、ライブ中に毎 0.25 秒
     走らせると打鍵ループがほぼ止まる（実測 3.3 FPS）。位置が安定している見出しは
     探索範囲を絞れば同じ結果をはるかに安く得られる。
+
+    窓スケール係数は **切り出す前の全体フレームから求めて切り出し側へ渡す**。
+    切り出し画像の幅から係数を推定すると誤る（切り出しは box の幅になる）。
     """
     h, w = frame_bgr.shape[:2]
+    if scale is None:
+        scale = window_scale_wh(w, h)
     x0, y0, x1, y1 = box
     px0, py0 = int(w * x0), int(h * y0)
     sub = frame_bgr[py0:int(h * y1), px0:int(w * x1)]
     if sub.size == 0:
         return 0.0, None
-    score, pos = match_best(sub, imgs)
+    score, pos = match_best(sub, imgs, scale)
     if pos is None:
         return score, None
     return score, (pos[0] + px0, pos[1] + py0)
 
 
-def match_topmost(frame_bgr, imgs, thresh, min_gap_px=18):
+def match_topmost(frame_bgr, imgs, thresh, min_gap_px=18, scale=None):
     """閾値を超えるマッチのうち **最も上（yが小さい）** の中心を返す: (score, (x, y)) or (0, None)。
 
     フレンド一覧のように同じラベルが複数行に並ぶ画面で、「一番上の行」を確実に選ぶために使う。
     match_best は最良スコアの1件しか返さないため、どの行に当たるかが実行ごとに変わる。
+    `frame_bgr` は必ず全体フレームを渡す（窓スケール係数はその幅から求める）。
     """
+    if scale is None:
+        scale = window_scale(frame_bgr)
     best = (0.0, None)
     for templ in imgs:
         fh, fw = frame_bgr.shape[:2]
-        for s in SCALES:
+        for base in SCALES:
+            s = base * scale
             t = templ if s == 1.0 else cv2.resize(templ, None, fx=s, fy=s,
                                                   interpolation=cv2.INTER_AREA)
             th, tw = t.shape[:2]
@@ -1227,13 +1284,27 @@ class AutoLive:
         return (self.win["x"] + self.win["w"] / 2.0,
                 self.win["y"] + (top + bottom) / 2.0)
 
+    def _win_scale(self):
+        """クリック用の窓スケール係数。フレーム幅＝win の幅（grab はポイント等倍）から
+        求める。`__new__` 生成で win が無い経路では 1.0（従来どおり無補正）。"""
+        win = getattr(self, "win", None)
+        if not win or not win.get("w"):
+            return 1.0
+        return window_scale_wh(win["w"], win.get("h") or 0)
+
     def click_center_off(self, off):
+        """ゲーム中央 + 固定pxオフセットでクリック。オフセットは基準窓（671/529 幅）の
+        実測値なので、窓スケール係数を掛けてから足す（窓が縮むと UI も同じ率で縮む）。"""
         cx, cy = self.game_center_px()
-        self._click_screen(cx + off[0], cy + off[1])
+        s = self._win_scale()
+        self._click_screen(cx + off[0] * s, cy + off[1] * s)
 
     def click_anchor(self, pos_px, off):
-        """テンプレのマッチ位置(フレームpx) + 固定pxオフセットでクリック（画像追従・端末非依存）。"""
-        self._click_screen(*self.pixel_to_screen(pos_px[0] + off[0], pos_px[1] + off[1]))
+        """テンプレのマッチ位置(フレームpx) + 固定pxオフセットでクリック（画像追従・端末非依存）。
+        オフセットは基準窓の実測値なので窓スケール係数を掛ける（656x341 では最大約 6px のずれ）。"""
+        s = self._win_scale()
+        self._click_screen(*self.pixel_to_screen(pos_px[0] + off[0] * s,
+                                                 pos_px[1] + off[1] * s))
 
     def _enter_recovery(self, frame):
         """復帰導線に入ったことを記録する。続行してよければ True。

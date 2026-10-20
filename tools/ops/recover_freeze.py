@@ -17,7 +17,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import driver  # noqa: E402
-from autolive import match_multiscale  # noqa: E402
+from autolive import match_multiscale, window_scale  # noqa: E402
 
 import cv2  # noqa: E402
 
@@ -119,7 +119,9 @@ def main():
                 continue
             best = (0.0, None)
             for f in frames:
-                s, p = match_multiscale(f, tmpl[name])
+                # ゲーム画面の照合は窓スケール係数に追従させる（窓が基準幅から
+                # 縮むと等倍では閾値を割る。実測 2026-10-20: 656x341）
+                s, p = match_multiscale(f, tmpl[name], window_scale(f))
                 if s > best[0]:
                     best = (s, p)
             score, pos = best
@@ -131,7 +133,8 @@ def main():
                 if action == "CLICK":
                     click_px(pos, frames[-1])
                 elif action == "CLICKOFF":
-                    click_px((pos[0] + off[0], pos[1] + off[1]), frames[-1])
+                    ws = window_scale(frames[-1])
+                    click_px((pos[0] + off[0] * ws, pos[1] + off[1] * ws), frames[-1])
                 elif action == "CENTER":
                     click_frac(0.5, 0.55)
                 acted = True

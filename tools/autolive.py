@@ -50,17 +50,19 @@ LIFE 回復（ユーザー要件）:
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
+import threading
 import time
-
 import numpy as np
 import cv2
 import Quartz
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 import driver  # noqa: E402
+import ocr  # noqa: E402
 import tap_jitter as tap_jitter_module  # noqa: E402
 
 # --- ライブ中の自動PAUSE対策（実機実験で確定。docs/device-findings.md） ---
@@ -439,18 +441,20 @@ TEMPLATES = {
 }                                              # ※低電力モードは絶対に押さない（閉じるのみ）
 
 # --- LIFE 回復（ユーザー要件: きなこパンで回復・ステラは絶対に使わない） ---
-P_KINAKO_RECOVER = (0.644, 0.508)  # 「ライフが足りません」ダイアログ上段=きなこパンの「回復」
-P_LIFE_CONFIRM_X = (0.78, 0.41)    # 「ライフをN回復しました」確認ポップアップの×
 # ステラストーンの「回復」は下段(約 (0.644,0.69))にある。**絶対にクリックしない**。
 # 在庫切れ時はステラを使わず停止する。
-MAX_LIFE_RECOVERS = 6              # 連続でこの回数 LIFE 不足が続いたら（=きなこパン枯渇）停止
-# 1回の LIFE 回復で使うきなこパンの個数。きなこ行の数量ステッパー `[−][ 1 ][+]` の「+」を
-# (この値 − 1) 回押してから「回復」を押す。共鳴のきなこパンは 1個 LIFE +30、10倍ブーストの
-# ライブは LIFE -100 で、ライブ後はたいてい LIFE 20 → 3個で 110 になり1回で足りる。
-# 1個ずつだと「回復 → 確認 → LIFE不足ダイアログが再表示」を3周し、1周 3.3〜5.2 秒かかっていた
-# （2026-10-11 実測）。再表示のアニメ途中のフレームではきなこ行のスコアが 0.78 に落ち、
-# kinako_missing で周回が止まったこともある（同日 19:25）。
-KINAKO_PER_RECOVER = 3
+# 【枯渇判定 2026-10-20 改訂】旧 MAX_LIFE_RECOVERS(6) の「連続 LIFE 不足回数」は、1個の
+# 回復量が小さいイベントで在庫があるのに停止してしまうため廃止。正の信号は
+# (a) きなこ行が見つからない（kinako_missing。行ごと消えて上に詰まる＝本当の枯渇）と
+# (b) 「回復」を押したのにダイアログの現在 LIFE が増えない、の繰り返し（下記）の2つ。
+MAX_LIFE_NO_GAIN = 3               # 「回復」を押したのに現在 LIFE が増えない回数の上限（停止）
+# 1回の LIFE 回復で使うきなこパンの個数は**固定値を持たない**。1個あたりの回復量は
+# イベントで変わる（ユーザー指定 2026-10-20: 例 共鳴=30, 旧イベント=20,5）。個数は
+# `n = ceil((LIFEコスト − 現在LIFE) / 1個の回復量)` を 1..KINAKO_MAX_PER_RECOVER に
+# 収めて求め、すべて Vision OCR（tools/ocr.py）で画面から読む。読めないときは n=1
+# （従来の「1個ずつ回復」相当）に縮退する。LIFE は上限超えで保持できるので多めは損しない。
+KINAKO_MAX_PER_RECOVER = 10        # 1回の回復で積む個数の上限（コスト100・回復量5なら不足分）
+KINAKO_ASSUMED_COST = 100          # コストバッジ未取得時の仮定（実測の最大。10倍ブースト）
 KINAKO_STEP_GAP = 0.3              # 「+」を押す間隔（秒）
 # きなこ行が見つからないときに、**クリックせずに**撮り直して確認し続ける時間（秒）。
 # ダイアログの再表示アニメ・通知バナーの重なりで一瞬だけ閾値を割ることがある（上記 19:25）。
@@ -473,14 +477,19 @@ KINAKO_RECOVER_MAX_SEC = 30.0
 # 20s では同じダイアログをまたぐ再判定で期限切れになり「+」を再押した（2026-10-14）。
 KINAKO_PLUS_MEMORY_SEC = 90.0
 # 「回復」を押せないまま（何もクリックせずに）lifeshort をやり直す回数の上限。超えたら停止。
-# **やり直しは MAX_LIFE_RECOVERS（きなこ枯渇の判定）には数えない**（回復していないので）。
+# **やり直しは枯渇判定（MAX_LIFE_NO_GAIN）には数えない**（回復を押していないので）。
 MAX_LIFE_UNSETTLED = 8
-KINAKO_QTY3_MIN = 0.95            # 数量欄「3」の字形照合のしきい値（「3」1.00、それ以外 ≤0.88）
 KINAKO_OVERCAP_PX = 300           # 「上限を超えています」バッジとみなす赤画素数（実測 760〜812、平常 0）
-KINAKO_MINUS_MAX = 12             # 1回の回復で「−」を押す上限（数量を 3 へ戻す）
-# 数量欄の確定に必要な読み取り数。「1」「3」は連続2回の一致で確定。それ以外（「2」「4」…）
-# は3回にする: 「+」の後のカウントアップ（1→2→3）の途中の一瞬の「2」を「3より多い」と
-# 誤認して「−」を押さないため（実機で「+」×2の直後のフレームで起きうる）。
+KINAKO_MINUS_MAX = 12             # 1回の回復で「−」を押す上限（数量を目標 n へ戻す）
+# 「+」済みで数量が目標 n より小さいまま続いたとき、n 未満の確定数量で「回復」してよい
+# 猶予（秒）。在庫上限で「+」が効かないケースを unsettled 空転させないため。
+KINAKO_LOW_SETTLE_SEC = 4.0
+# 「+」済みなのに数量が n より大きい読みが続いたとき「−」を許す猶予（秒）。
+# カウントアップ途中の誤読で打ち消さないための安全弁（旧 plus_clicked ハードロックの置換）。
+KINAKO_HIGH_SETTLE_SEC = 4.0
+# 数量欄の確定に必要な読み取り数。数字が読めるなら連続2回の一致で確定。
+# 読めない（None）は3回にする: 「+」の後のカウントアップ（1→2→3）の途中の一瞬の
+# 誤読で「−」を押さないため（実機で「+」×2の直後のフレームで起きうる）。
 KINAKO_SETTLE_READS = 2
 KINAKO_OTHER_READS = 3
 # 「NEXT を押しても画面が変わらない」が続く回数の上限（その間に detect は songselect を
@@ -806,34 +815,93 @@ def kinako_qty_is_one(frame_rgb, plus_pt):
     return bool(bw <= 0.0045 * w + 0.5 and bh >= 0.015 * h)
 
 
-_QTY3 = None
+_ZEN_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
 
 
-def _qty3_glyphs():
-    """数量欄「3」の字形テンプレ群（kinako_qty3*.png）。テーマ/機種で色・形が変わるため
-    バリアントを並べ、いずれかが当たればよい（2026-10-14: 既存のグレー字形が
-    Encounter Love Song のテーマで 0.856 に落ち、数量3を読めず unsettled した）。"""
-    global _QTY3
-    if _QTY3 is None:
-        import glob
-        _QTY3 = [cv2.imread(p, cv2.IMREAD_GRAYSCALE)
-                 for p in sorted(glob.glob(os.path.join(TEMPLATE_DIR, "kinako_qty3*.png")))]
-        _QTY3 = [g for g in _QTY3 if g is not None]
-    return _QTY3
+def kinako_qty_ocr(frame_rgb, plus_pt):
+    """数量欄の整数を OCR で読む（None=読めない）。
 
-
-def kinako_qty_is_three(frame_rgb, plus_pt):
-    """数量欄が「3」か。実機の数量欄から切り出した「3」の字形群（グレー）と
-    数量欄を照合する（実測: 「3」1.00 / 「1」0.47 / 「5」〜「10」0.38〜0.69。演出の重なりで 0.83〜0.88）。"""
+    「1」は Vision OCR が落とすことがある（実測 2026-10-20）ので、先に
+    `kinako_qty_is_one`（画素の縦棒判定）を見る。それ以外の数字は OCR が
+    「3」「7」「10」等を安定して読む。切り出しは「+」位置基準（行確認済み前提）。
+    """
+    if kinako_qty_is_one(frame_rgb, plus_pt):
+        return 1
     x0, x1, y0, y1 = _kinako_qty_box(frame_rgb, plus_pt)
-    sub = cv2.cvtColor(np.ascontiguousarray(frame_rgb[y0:y1, x0:x1]), cv2.COLOR_RGB2GRAY)
-    best = 0.0
-    for g3 in _qty3_glyphs():
-        th, tw = g3.shape[:2]
-        if sub.shape[0] < th or sub.shape[1] < tw:
-            continue
-        best = max(best, float(cv2.matchTemplate(sub, g3, cv2.TM_CCOEFF_NORMED).max()))
-    return best >= KINAKO_QTY3_MIN
+    best = None
+    for text, _bx0, _by0, _bx1, _by1 in ocr.recognize(
+            np.ascontiguousarray(frame_rgb[y0:y1, x0:x1])):
+        m = re.fullmatch(r"\s*(\d+)\s*", text.translate(_ZEN_DIGITS))
+        if m:
+            best = int(m.group(1))
+    return best
+
+
+def kinako_per_pan_ocr(frame_rgb, row_pos):
+    """きなこ行ラベル「…きなこパン：LIFE N 回復」から 1 個あたりの回復量 N を読む。
+
+    接頭辞（共鳴→共期・共明・バン等）は誤読されるので `LIFE\\s*(\\d+)\\s*回復` の
+    数字部分だけを使う（実測 2026-10-20）。ラベルは 2 行（名称＋使用期限）なので
+    帯は行の上下に広めに取る。切り出しは**行のテンプレ一致位置基準**
+    （固定pxは窓サイズで壊れる）。読めなければ None（呼び出し側で n=1 に縮退）。
+    """
+    h, w = frame_rgb.shape[:2]
+    y0 = max(0, int(row_pos[1] - 0.065 * h))
+    y1 = min(h, int(row_pos[1] + 0.055 * h))
+    x0 = max(0, int(row_pos[0] - 0.14 * w))
+    x1 = min(w, int(row_pos[0] + 0.26 * w))
+    texts = ocr.recognize_texts(np.ascontiguousarray(frame_rgb[y0:y1, x0:x1]))
+    for text in texts:
+        m = re.search(r"LIFE\s*(\d+)\s*回復", text.translate(_ZEN_DIGITS))
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def dialog_life_ocr(frame_rgb, row_pos):
+    """LIFE 不足ダイアログ右上の「LIFE ♥ N」（現在 LIFE）を読む。読めなければ None。
+
+    縦は行基準（ダイアログの上 0.15h 付近）、横はフレーム比で固定。ピルの白い
+    1 桁数字（「6」「0」）は素の OCR で落ちるので、読めなければ白文字二値化で
+    読み直す（実測 2026-10-20）。
+    """
+    h, w = frame_rgb.shape[:2]
+    y0 = max(0, int(row_pos[1] - 0.155 * h))
+    y1 = min(h, int(row_pos[1] - 0.068 * h))
+    x0 = int(0.549 * w)
+    x1 = int(0.701 * w)
+    if y1 <= y0 or x1 <= x0:
+        return None
+    sub = np.ascontiguousarray(frame_rgb[y0:y1, x0:x1])
+    texts = ocr.recognize_texts(sub)
+    nums = [t for t in texts
+            if re.fullmatch(r"\s*\d+\s*", t.translate(_ZEN_DIGITS))]
+    if not nums:
+        nums = [t for t in ocr.recognize_texts(sub, binarize=True)
+                if re.fullmatch(r"\s*\d+\s*", t.translate(_ZEN_DIGITS))]
+    if not nums:
+        return None
+    return int(nums[-1].translate(_ZEN_DIGITS))
+
+
+# フレンド選択・編成画面の上部「♥-N」コストバッジの切り出し（フレーム比。
+# 実測 656x341: y 70..95 → 0.205..0.279、x 380..440 → 0.579..0.671）。
+_COST_BADGE_BOX = (0.205, 0.279, 0.579, 0.671)
+
+
+def life_cost_ocr(frame_rgb):
+    """フレンド選択・編成画面の上部バッジ「♥-N」からライブの LIFE コストを読む。
+    バッジが無い・読めないときは None（呼び出し側は直前の値か KINAKO_ASSUMED_COST）。
+    """
+    h, w = frame_rgb.shape[:2]
+    fy0, fy1, fx0, fx1 = _COST_BADGE_BOX
+    sub = np.ascontiguousarray(
+        frame_rgb[int(fy0 * h):int(fy1 * h), int(fx0 * w):int(fx1 * w)])
+    for text in ocr.recognize_texts(sub):
+        m = re.search(r"-\s*(\d+)", text.translate(_ZEN_DIGITS))
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def kinako_minus_point(frame_rgb, plus_pt):
@@ -1012,7 +1080,10 @@ class AutoLive:
         self.last_start_ts = 0.0        # 直近の START 押下時刻（同じ画面での押し直しを数えないため）
         self.circle_i = 0
         self.closex_i = 0           # closex 候補位置の巡回インデックス
-        self.life_recovers = 0      # 連続 LIFE 回復回数（きなこパン枯渇検知用）
+        self.life_recovers = 0      # 連続 LIFE 回復回数（ログ表示用）
+        self.life_cost = None       # ライブの LIFE コスト（friendselect/formation のバッジで読む）
+        self._kinako_prev_life = None  # 前回「回復」を押した時点の現在 LIFE（増加判定の比較元）
+        self._life_no_gain = 0      # 「回復」を押したのに LIFE が増えない読みの連続回数
         self.advance_alt = {}       # 送り画面ごとに、右側タップが効かなかったら中央へ切り替える印
         self.advance_since = None   # (Result 系の状態, その状態が続き始めた時刻)
         self.recovers = 0           # アプリ再起動からの復帰試行回数（暴走防止）
@@ -2316,34 +2387,60 @@ class AutoLive:
             self.log(f"[warn] {state}: 右側タップで {now - since[1]:.0f}s 進まない"
                      f" → 以後は中央タップで送る")
 
+    # --- LIFE 回復の読み取り（Vision OCR。テストで差し替えられるようメソッド経由）---
+    def _qty_ocr(self, frame, ref):
+        return kinako_qty_ocr(frame, ref)
+
+    def _per_pan_ocr(self, frame, row_pos):
+        return kinako_per_pan_ocr(frame, row_pos)
+
+    def _life_ocr(self, frame, row_pos):
+        return dialog_life_ocr(frame, row_pos)
+
+    def _life_cost(self):
+        """ライブの LIFE コスト。フレンド選択/編成で読んだ値か、未取得なら観測最大値。"""
+        v = getattr(self, "life_cost", None)
+        return v if v else KINAKO_ASSUMED_COST
+
     def _recover_life(self, frame):
-        """LIFE 不足ダイアログで、きなこパンを KINAKO_PER_RECOVER(3) 個使って回復する。
+        """LIFE 不足ダイアログで、必要な個数のきなこパンを使って回復する。
 
         戻り値 (status, kinako_score, frame):
           "recovered"      … きなこ行の「回復」を押した
           "gone"           … ダイアログが消えた（「回復」は押していない）
           "unsettled"      … 押せるフレームが取れず「回復」を押さなかった（次の detect でやり直す）
           "kinako_missing" … KINAKO_RECHECK_SEC 撮り直してもきなこ行が一度も見えない（**何も押していない**）
+          "life_no_gain"   … 直前の「回復」で現在 LIFE が増えない読みが MAX_LIFE_NO_GAIN 回
+                            続いた（**この呼び出しでは何も押していない**）
 
         押す点はすべて**きなこ行のテンプレ一致位置から**求める（ステラ行は 0.26h 下・ステッパー無し）。
         - 「回復」: kinako_recover_point（行と同じ高さのピンクのボタン）
         - 「+」  : kinako_plus_point（「回復」と同じ高さ・その左の青い箱の中の白い十字）
         - 「−」  : kinako_minus_point（同じステッパーの左端の白い横棒）
 
-        手順（ユーザー指定 2026-10-11）:
+        手順（2026-10-20 改訂。個数は Vision OCR で読んだ値から毎回決める・固定値なし）:
         1. 行が閾値を超えて見え、**行の位置が2枚続けて同じ**フレームを待つ。ダイアログには
            キラキラ演出が約 0.5 秒ごとにきなこ行を横切り、その間スコアは 0.72〜0.80 に落ちる
            （閾値 0.80、平常 0.83）。全画面の静止判定は「+」自身のタップ演出でも崩れるので使わない。
-        2. **「+」はダイアログ1回の出現につきちょうど2回**（1 → 3）。数量欄が「1」と
-           確定したときだけ押し、押した事実を self.kinako_plus_at に残して、同じダイアログでは
-           二度と押さない。
-        3. **数量欄は同じ読みが続くまで確定しない。** 「1」「3」は連続 KINAKO_SETTLE_READS(2) 回、
-           それ以外は KINAKO_OTHER_READS(3) 回。これにより「+」の後のカウントアップ（1→2→3）の
-           途中に一瞬だけ見える「2」を「3より多い」と誤認して「−」を押すことはない。
-        4. 赤い「上限を超えています」バッジが出ている間は「−」を押すだけ（「回復」は押さない）。
-           バッジ無しで数量が確定して「3」でも「1」でもなければ「−」で戻す。
-        5. 数量欄が「3」と確定したら「回復」。「+」が見つからない（数量欄が「1」のまま）なら
-           1個で回復。確定した「1」で「+」済みなら押し直さず待つ（時間切れで unsettled）。
+        2. 静止フレームで「1個の回復量」（ラベル `LIFE N 回復`）と「現在 LIFE」（右上 `LIFE ♥ N`）
+           を OCR で読み、`n = ceil((コスト − LIFE) / 回復量)` を 1..KINAKO_MAX_PER_RECOVER に
+           収めて目標個数にする。コストはフレンド選択・編成画面のバッジで読んだ self.life_cost
+           （未取得なら KINAKO_ASSUMED_COST）。回復量・LIFE が読めなければ n = 1。
+        3. 直前の「回復」で現在 LIFE が増えていない読みが続いていたら、**何も押さず**
+           "life_no_gain" を返す（回復が効いていないときにパンを浪費しない歯止め。
+           旧 MAX_LIFE_RECOVERS の連続回数判定の置き換え）。
+        4. **「+」はダイアログ1回の出現につき1セットだけ**、数量欄が n より小さいと確定した
+           ときに (n − 数量) 回押す。押した事実を self.kinako_plus_at に残し、同じダイアログ
+           では二度と押さない。
+        5. **数量欄は同じ読みが続くまで確定しない。** 数字は連続 KINAKO_SETTLE_READS(2) 回、
+           読めない（None）は KINAKO_OTHER_READS(3) 回。カウントアップ途中の誤読で「−」を
+           押さないため。
+        6. 赤い「上限を超えています」バッジが出ている間は「−」を押すだけ（「回復」は押さない）。
+           バッジ無しで確定数量が n より多ければ「−」で n まで戻す。
+        7. 「回復」は**数量欄が n と確定し、バッジが無いときだけ**押す。数量欄が読めない
+           まま「回復」は押さない。「+」が見つからない・押せないのに数量が n 未満のまま
+           KINAKO_LOW_SETTLE_SEC 続いたときは、その確定数量（≥1）で回復する
+           （在庫上限で n に届かない場合の空転防止）。
         """
         ls_imgs, ls_thr = self.templates["lifeshort"]
         k_imgs, k_thr = self.templates["kinakorow"]
@@ -2357,8 +2454,9 @@ class AutoLive:
         now = time.time()
         plus_at = getattr(self, "kinako_plus_at", None)
         plussed = plus_at is not None and now - plus_at[0] < KINAKO_PLUS_MEMORY_SEC
-        # このダイアログで「+」を押した事実（呼出をまたいで保持）。直後の数量「?」読みで
-        # 「−」を踏むと打ち消してしまうので、settled_ot の minus 発火を抑える判定に使う。
+        # このダイアログで「+」を押した事実（呼出をまたいで保持）。直後のカウントアップ
+        # 途中の数量読みで「−」を踏むと打ち消してしまうので、q > n の minus 発火に
+        # KINAKO_HIGH_SETTLE_SEC の猶予を持たせる判定に使う。
         plus_clicked = plussed and getattr(self, "_kinako_plus_clicked", False)
         if not plussed:
             self.kinako_plus_at = None
@@ -2371,9 +2469,16 @@ class AutoLive:
         best_ks, prev_kp = ks, None
         seen_row = False
         minus_taps = 0
-        qty = None
-        qty_seq = []      # 数量欄の読み（"3"/"1"/"?"）の連続列。確定に使う
-        just_clicked = False  # 「+」「−」を押した直後（再び2枚揃うのを待つ）
+        qty = None              # 「回復」に進むときの説明文字列（実際の個数）
+        qty_seq = []            # 数量欄の読み（int / None）の連続列。確定に使う
+        just_clicked = False    # 「+」「−」を押した直後（再び2枚揃うのを待つ）
+        per_pan = None          # 1個の回復量（この出現で最初に読めた値）
+        life = None             # 現在 LIFE（読めた最新値）
+        cost = self._life_cost()
+        n_target = 1            # 回復量・現在 LIFE が読めるまでの安全側個数
+        gain_checked = False    # この呼び出しで「回復後に LIFE が増えたか」を判定済みか
+        low_since = None        # 「+」済みで数量が n 未満の確定が続き始めた時刻
+        high_since = None       # 「+」済みで数量が n 超過の確定が続き始めた時刻
         while True:
             if not on:
                 self.kinako_plus_at = None
@@ -2395,20 +2500,39 @@ class AutoLive:
                 # 数量欄の位置は「+」から決まる。「+」が演出に隠れたフレームでは、行（=「回復」）から
                 # 求めた既定の相対位置（実測: 「回復」中心の 0.089w 左）を使う。
                 ref = plus if plus is not None else (rec[0] - 0.089 * cur.shape[1], rec[1])
-                three = kinako_qty_is_three(cur, ref)
-                one = kinako_qty_is_one(cur, ref)
-                # 同じ読みが続くまで確定しない（カウントアップ途中の「2」で「−」を押さない）。
+                # --- OCR 読み取り（行基準の切り出し。各 ~23ms、ダイアログ上でだけ呼ぶ）---
+                if per_pan is None:
+                    per_pan = self._per_pan_ocr(cur, kp)
+                v = self._life_ocr(cur, kp)
+                if v is not None:
+                    life = v
+                if not gain_checked and life is not None:
+                    # 「回復を押したのに現在 LIFE が増えない」が続いたときの歯止め。
+                    # このダイアログの LIFE が直前の回復時点より増えていればリセット。
+                    gain_checked = True
+                    prev = getattr(self, "_kinako_prev_life", None)
+                    if prev is not None:
+                        if life > prev:
+                            self._life_no_gain = 0
+                        else:
+                            self._life_no_gain = getattr(self, "_life_no_gain", 0) + 1
+                            if self._life_no_gain >= MAX_LIFE_NO_GAIN:
+                                return "life_no_gain", best_ks, cur
+                if per_pan is not None and life is not None:
+                    n_target = max(1, min(KINAKO_MAX_PER_RECOVER,
+                                          -(-(cost - life) // per_pan)))
+                q = self._qty_ocr(cur, ref)
+                # 同じ読みが続くまで確定しない（カウントアップ途中の誤読で「−」を押さない）。
                 # バッジだけは即座に扱う（読み取りを待つ必要がない）。
-                cls = "3" if three else ("1" if one else "?")
-                if not qty_seq or qty_seq[-1] != cls:
-                    qty_seq = [cls]
+                if not qty_seq or qty_seq[-1] != q:
+                    qty_seq = [q]
                 else:
-                    qty_seq.append(cls)
-                settled13 = len(qty_seq) >= KINAKO_SETTLE_READS and cls != "?"
-                settled_ot = len(qty_seq) >= KINAKO_OTHER_READS and cls == "?"
+                    qty_seq.append(q)
+                settled = q is not None and len(qty_seq) >= KINAKO_SETTLE_READS
                 if over:
                     # **赤いバッジが出ている間は「回復」を押さない**（上の分岐に来ない）。
                     # 数量に関係なく「−」で戻す。
+                    low_since = high_since = None
                     minus = kinako_minus_point(cur, ref)
                     if minus is not None and minus_taps < KINAKO_MINUS_MAX:
                         self.click_match(minus)
@@ -2419,13 +2543,13 @@ class AutoLive:
                         time.sleep(KINAKO_STEP_GAP)
                         qty_seq = []
                         just_clicked = True   # 押した後は撮り直して2枚揃うのを待つ
-                elif settled13 and cls == "3":
-                    qty = f"{KINAKO_PER_RECOVER}個（数量欄 3 を確認）"
+                elif settled and q == n_target:
+                    qty = f"{q}個（数量欄 {q} を確認）"
                     break
-                elif settled13 and cls == "1":
-                    if plus is not None and not plussed and KINAKO_PER_RECOVER > 1:
-                        # 開いた直後の数量 1 → 「+」をちょうど2回で 3。この出現ではもう押さない。
-                        for _ in range(KINAKO_PER_RECOVER - 1):
+                elif settled and q < n_target:
+                    high_since = None
+                    if plus is not None and not plussed:
+                        for _ in range(n_target - q):
                             self.click_match(plus)
                             time.sleep(KINAKO_STEP_GAP)
                         self.kinako_plus_at = (time.time(), kp, plus)
@@ -2436,16 +2560,27 @@ class AutoLive:
                         qty_seq = []
                         just_clicked = True
                     elif plus is None and not plussed:
-                        qty = "1個（「+」が見つからない）"
+                        qty = f"{q}個（「+」が見つからない）"
                         break
-                    # plussed なのに 1 のまま: 「+」の反映待ち。押し直さずに待つ（時間切れで unsettled）。
-                elif settled_ot and minus_taps < KINAKO_MINUS_MAX and not plus_clicked:
-                    # 数量が確定して 1 でも 3 でもない（前回の積み増しが残っている等）→「−」で戻す。
-                    # **「+」済みなら「−」は打たない**: カウントアップ途中や未知字形の「?」を
-                    # 数量超過と取り違えて打ち消すのを防ぐ（2026-10-14 実機: 「+」x2 直後に
-                    # 「−」が踏まれ数量が戻った）。
+                    else:
+                        # plussed なのに n に届かない: 反映待ち。KINAKO_LOW_SETTLE_SEC を
+                        # 超えても増えなければ在庫上限とみなし、確定数量（≥1）で回復する
+                        # （空転して kinako_unsettled で止めるより 1 個でも進める）。
+                        if low_since is None:
+                            low_since = time.time()
+                        elif time.time() - low_since >= KINAKO_LOW_SETTLE_SEC:
+                            qty = f"{q}個（「+」後も n={n_target} に届かず確定数量で回復）"
+                            break
+                elif settled and q > n_target:
+                    low_since = None
+                    # 確定数量が目標 n より多い（前回の積み増しが残っている等）→「−」で n に戻す。
+                    # 「+」直後の誤読・カウントアップ途中の高読みで打ち消さないよう、
+                    # plus_clicked なら KINAKO_HIGH_SETTLE_SEC 続くまで「−」を待つ。
                     minus = kinako_minus_point(cur, ref)
-                    if minus is not None:
+                    if minus is not None and minus_taps < KINAKO_MINUS_MAX \
+                            and (not plus_clicked
+                                 or (high_since is not None
+                                     and time.time() - high_since >= KINAKO_HIGH_SETTLE_SEC)):
                         self.click_match(minus)
                         minus_taps += 1
                         self.kinako_plus_at = (time.time(), kp, plus or ref)
@@ -2454,9 +2589,16 @@ class AutoLive:
                         time.sleep(KINAKO_STEP_GAP)
                         qty_seq = []
                         just_clicked = True   # 押した後は撮り直して2枚揃うのを待つ
+                        high_since = None
+                    elif plus_clicked:
+                        if high_since is None:
+                            high_since = time.time()
+                else:
+                    low_since = high_since = None
             if time.time() >= deadline or time.time() >= hard_deadline:
                 if seen_row:
-                    self.log(f"[dbg] kinako未確定: 読み={qty_seq[-6:]} "
+                    self.log(f"[dbg] kinako未確定: 読み={qty_seq[-6:]} n={n_target} "
+                             f"per_pan={per_pan} life={life} cost={cost} "
                              f"plus_clicked={plus_clicked} minus={minus_taps}")
                 return ("unsettled" if seen_row else "kinako_missing"), best_ks, cur
             time.sleep(ADVANCE_STABLE_GAP if seen_row else KINAKO_RECHECK_GAP)
@@ -2467,14 +2609,15 @@ class AutoLive:
             best_ks = max(best_ks, ks)
         if minus_taps:
             qty += f"・「−」{minus_taps}回で戻した"
-        self.log(f"LIFE不足 → きなこパンで回復（{self.life_recovers}回目, ステラ不使用・"
-                 f"行確認 score={ks:.2f}, {qty}）")
+        self.log(f"LIFE不足 → きなこパン{qty}で回復（{self.life_recovers}回目, ステラ不使用・"
+                 f"行確認 score={ks:.2f}, 回復量={per_pan}, LIFE={life}, コスト={cost}）")
         try:
             from PIL import Image as _I
             _I.fromarray(cur).save(os.path.join(self.dbg_dir, "kinako_before_recover.png"))
         except Exception:
             pass
         self.click_match(rec)  # きなこパン行の「回復」
+        self._kinako_prev_life = life   # 次のダイアログで「LIFE が増えたか」の比較元
         self.kinako_plus_at = None
         self._kinako_plus_clicked = False
         # ダイアログが消えて確認カード（「ライフをN回復しました」）に替わってから閉じる。
@@ -2502,6 +2645,10 @@ class AutoLive:
         caf = None
         if not self.dry_run:
             driver.activate()
+            # Vision OCR のモデル読み込みは最初の 1 回だけ約 25 秒かかる（実測）。
+            # LIFE 不足ダイアログで詰まらないよう、**ループを止めないバックグラウンドで**
+            # 空画像を投げて済ませておく。Vision 未導入なら no-op。
+            threading.Thread(target=ocr.warmup, daemon=True).start()
             # システムのアイドル/スリープ/ディスプレイ消灯を抑止（PAUSE対策の補助）。
             try:
                 caf = subprocess.Popen(["caffeinate", "-dimsu"])
@@ -2625,23 +2772,28 @@ class AutoLive:
                 time.sleep(0.6)
             elif state == "lifeshort":
                 # LIFE不足ダイアログ。**きなこパンで回復し、ステラは絶対に使わない**。
-                # きなこパン KINAKO_PER_RECOVER 個（きなこ行の「+」）→ 回復 → 確認カードを閉じる、
-                # を1手順で行う（_recover_life）。
+                # 個数 n は「1個の回復量・現在 LIFE・LIFE コスト」を OCR で読んで決め、
+                # きなこ行の「+」で数量を n へ → 回復 → 確認カードを閉じる、を1手順で
+                # 行う（_recover_life）。1個の回復量はイベントで変わるので固定値は持たない。
                 self.life_recovers += 1
-                if self.life_recovers > MAX_LIFE_RECOVERS:
-                    fn = os.path.join(self.dbg_dir,
-                                      f"life_depleted_{int(time.time()-self.t_start)}.png")
-                    from PIL import Image as _I
-                    _I.fromarray(frame).save(fn)
-                    self.log(f"[warn] LIFE不足が継続（きなこパン枯渇の可能性）→ {fn} 保存。"
-                             f"ステラは使わず停止します。")
-                    self.stop_reason = "life_short_persist"
-                    break
                 # **押す前に「きなこパン行が実在すること」を画像で確認する。**
                 # 枯渇時は行が消えて詰まり、旧実装は同じオフセットでステラの「回復」を
                 # 押していた（実機で既遂）。KINAKO_RECHECK_SEC 撮り直しても見つからなければ
                 # **クリックせず停止**する（撮り直しの間も一切押さない）。
                 status, kscore, kframe = self._recover_life(frame)
+                if status == "life_no_gain":
+                    # 「回復」を押したのに現在 LIFE が増えない読みが続いた。回復が
+                    # 効いていない（在庫切れに近い・反映されない等）のにパンを浪費
+                    # しないよう、**この呼び出しでは何も押していない**。停止する。
+                    fn = os.path.join(self.dbg_dir,
+                                      f"life_depleted_{int(time.time()-self.t_start)}.png")
+                    from PIL import Image as _I
+                    _I.fromarray(kframe).save(fn)
+                    self.log(f"[warn] 「回復」を押しても現在 LIFE が増えない読みが "
+                             f"{MAX_LIFE_NO_GAIN} 回続いた → {fn} 保存。"
+                             f"ステラは使わず停止します。")
+                    self.stop_reason = "life_short_persist"
+                    break
                 if status == "kinako_missing":
                     fn = os.path.join(self.dbg_dir,
                                       f"kinako_missing_{int(time.time()-self.t_start)}.png")
@@ -2674,6 +2826,8 @@ class AutoLive:
                         break
             elif state == "gameplay":
                 self.life_recovers = 0  # ライブに入れた＝LIFEは足りた
+                self._kinako_prev_life = None   # 直前の回復の比較を無効化（増加判定はライブをまたがない）
+                self._life_no_gain = 0
                 now = time.time()
                 if self.gameplay_since is None:
                     self.gameplay_since = now
@@ -2892,6 +3046,11 @@ class AutoLive:
                 else:
                     self.songsel_nochg = 0
             elif state == "friendselect":
+                # 上部の「♥-N」コストバッジを読んで覚えておく（LIFE 回復の個数 n の計算に使う。
+                # 読めなければ直前の値を維持。未取得なら _life_cost() は KINAKO_ASSUMED_COST）。
+                _cost = life_cost_ocr(frame)
+                if _cost is not None:
+                    self.life_cost = _cost
                 # フレンド（サポート）選択 → **必ず一番上の行**（ユーザー要件）。
                 # アピールスキル ラベルは全行に出るため、最良スコアではなく最上段を選ぶ。
                 # **一覧が静止してから押す。** 遷移アニメ中の1回目のタップは無視され、旧実装は
@@ -2913,6 +3072,10 @@ class AutoLive:
                 # 二度押し防止の待ちは「画面が変わるまで」（最大 1.0 秒＝旧の固定値）。
                 self._wait_change(fresh, 1.0)
             elif state == "formation":
+                # 上部の「♥-N」コストバッジを読んで覚えておく（friendselect と同じ）。
+                _cost = life_cost_ocr(frame)
+                if _cost is not None:
+                    self.life_cost = _cost
                 # 編成画面 → START（STARTテンプレのマッチ位置を直接クリック・端末非依存）。
                 # **クリア無しで START が続いたら、押さずに停止する**（MAX_STARTS_WITHOUT_CLEAR）。
                 # 同じ編成画面での押し直し（タップ無視→数秒後に再検出）は 10 秒以内として数えない。

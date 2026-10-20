@@ -64,6 +64,17 @@ nohup tools/ops/run_until.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &   # �
 nohup tools/ops/run_until.sh $(date -j -f '%H:%M:%S' '23:45:00' +%s) > /dev/null 2>&1 &
 ```
 
+**無制限で今すぐ回す**（対話メニュー 4 と同じ 30 日。曲は人が選んだまま触らない）:
+
+```bash
+I7_TAP_EXTRA="--keep-selection" nohup tools/ops/run_until.sh $(( $(date +%s) + 2592000 )) > /dev/null 2>&1 &
+```
+
+Claude Code では `/run-forever`（`.claude/skills/run-forever/SKILL.md`）が、下の起動前確認を
+スクショ 1 枚で済ませてこのコマンドを打ち、起動を確かめるところまで行う。
+「無制限」でも休憩時間に入ると `break_time` で安全停止し runner も終了するので、
+休憩明けにもう一度実行する。
+
 > `nohup ... &` で**引数なし**は使えない。対話モードは端末からの入力が要るので、
 > stdin が無いと usage を出して落ちる（黙ってハングしない）。
 
@@ -81,7 +92,7 @@ nohup tools/ops/run_until.sh $(date -j -f '%H:%M:%S' '23:45:00' +%s) > /dev/null
 | **オート** | **OFF** | ON だと1ライブにつきブリンドリンクを3個消費する |
 | **ブースト** | **3倍** | イベント pt の効率が落ちる |
 | 難易度 | **EASY** | 〃 |
-| 入口 | ホーム**左下のイベントリボン**から入った楽曲 | ホームの「LIVE」から入ると通常ライブで **pt が一切付かない** |
+| 入口 | ホーム**右側の EVENT リボン（ラベル帯ベージュ）**から入った楽曲 | ホームの「LIVE」から入ると通常ライブで **pt が一切付かない** |
 | きなこパン残量 | 周回数ぶん残っている | 枯渇すると安全停止する（`kinako_missing`） |
 | ステラ所持数 | 開始前の数を控える | 終了後に減っていたら誤消費。詳細は [`operations.md`](operations.md)「実機を動かす際の確認項目」 |
 | 多重起動 | 0件（`pgrep -f 'run_until\|supervise_autolive\|tools/autolive'`） | 2プロセスが同じ画面を叩き合う |

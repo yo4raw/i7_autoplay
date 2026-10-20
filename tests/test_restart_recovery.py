@@ -299,24 +299,24 @@ class TestDailyTaskPopup(unittest.TestCase):
     """
 
     def test_judged_in_the_dark_path(self):
-        """明るい側に置いても意味がない（そこまで到達しない）。"""
-        src = read_src()
-        start = src.index("if bright < DARK_THRESH")
-        end = src.index('return "gameplay", res', start)
-        self.assertIn('self.templates["dailytask"]', src[start:end],
-                      "dailytask は暗い側の判定に置くこと")
+        """dailytask は暗い側の救済照合（DARK_RESCUE_KEYS）に登録されていること。"""
+        keys = [k for k, _ in AL.DARK_RESCUE_KEYS]
+        self.assertIn("dailytask", keys,
+                      "dailytask は暗い側の判定（DARK_RESCUE_KEYS）に置くこと")
 
     def test_shares_the_throttled_recheck(self):
         """毎フレーム照合すると打鍵ループが死ぬ（過去に 3.3 FPS まで落ちた）。
 
-        songselect 救済と同じ間引き枠（DARK_RECHECK_SEC）に相乗りしていること。
+        救済照合は detect() の DARK_RECHECK_SEC 枠の内側に置かれていること。
         """
         src = read_src()
         start = src.index("if bright < DARK_THRESH")
         end = src.index('return "gameplay", res', start)
         dark = src[start:end]
         self.assertIn("self._last_dark_check", dark)
-        self.assertLess(dark.index("self._last_dark_check"), dark.index('self.templates["dailytask"]'))
+        # DARK_RESCUE_KEYS を辿る照合が、_last_dark_check の内側にあること。
+        self.assertIn("DARK_RESCUE_KEYS", dark)
+        self.assertLess(dark.index("self._last_dark_check"), dark.index("DARK_RESCUE_KEYS"))
 
     def test_handler_closes_with_x(self):
         body = handler_body("dailytask")

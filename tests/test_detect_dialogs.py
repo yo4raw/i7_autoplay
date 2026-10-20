@@ -342,3 +342,74 @@ class TestNormalSongselectBadge(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDlDialog(unittest.TestCase):
+    """「約NN MBのデータをダウンロードします。」を cardx と誤認しないこと。
+
+    2026-09-15 22:36 実機: EVENT RESULT 上に出たこのダイアログが dldialog=0.849 で
+    しきい値 0.85 をわずかに下回り、色判定の cardx(1.0) に流れて背景タップ 10 回 →
+    cardx_stuck で安全停止した（runner も終了し、人手で「ダウンロード」を押して復旧）。
+    コーパス上の非DL画面での最大スコアは 0.584 なので、しきい値には十分な余裕がある。
+    """
+
+    def test_detected_as_dldialog(self):
+        state, res = detect_file("dl_dialog_671x348.png")
+        self.assertEqual("dldialog", state, f"{state} と誤判定")
+        self.assertGreaterEqual(res["dldialog"][0], res["dldialog"][1])
+
+    def test_anchor_lands_on_download_button(self):
+        """アンカー着弾点が右側の「ダウンロード」ボタン内（キャンセルではない）。"""
+        _, res = detect_file("dl_dialog_671x348.png")
+        cx, cy = res["dldialog"][2]
+        x = cx + AL.ANCH_DOWNLOAD[0]
+        y = cy + AL.ANCH_DOWNLOAD[1]
+        self.assertTrue(355 <= x <= 455 and 252 <= y <= 282,
+                        f"着弾 ({x:.0f},{y:.0f}) が「ダウンロード」ボタン外")
+
+
+class TestImessageDialog(unittest.TestCase):
+    """iOS の「iMessage と FaceTime をオンにしますか？」を暗い側で拾い、「使用しない」を押すこと。
+
+    2026-09-16 07:39 実機: 編成画面の上にこの iOS ダイアログが出て画面が暗転
+    （frame_brightness 63.7 < DARK_THRESH 65）。暗い側の救済に無かったため gameplay 扱いのまま
+    240 秒で gameplay_timeout 停止 → runner 終了（人手で「使用しない」を押して復旧）。
+    「オンにする」は SMS 送信で課金され得る旨がダイアログに明記されているので絶対に押さない。
+    """
+
+    def test_detected_as_imessage_on_dark_frame(self):
+        state, res = detect_file("imessage_prompt_671x348.png")
+        self.assertEqual("imessage", state, f"{state} と誤判定")
+        self.assertGreaterEqual(res["imessage"][0], res["imessage"][1])
+
+    def test_anchor_lands_on_do_not_use_button(self):
+        """着弾点が左の「使用しない」内で、右の「オンにする」(x≥343) には掛からない。"""
+        _, res = detect_file("imessage_prompt_671x348.png")
+        cx, cy = res["imessage"][2]
+        x = cx + AL.ANCH_IMESSAGE_NO[0]
+        y = cy + AL.ANCH_IMESSAGE_NO[1]
+        self.assertTrue(225 <= x <= 330 and 226 <= y <= 256,
+                        f"着弾 ({x:.0f},{y:.0f}) が「使用しない」ボタン外")
+
+
+class TestIcloudSyncDialog(unittest.TestCase):
+    """iOS の「一部の iCloud データは同期していません」を拾い、「今はしない」を押すこと。
+
+    2026-09-16 19:43 実機: EVENT RESULT の上にこの iOS ダイアログが出て unknown_screen 停止
+    （人手で「今はしない」を押して復旧）。同日 07:39 の iMessage 確認と同系統の iOS システム
+    ダイアログ。「データの同期を再開」は端末設定を変えるので押さない。
+    """
+
+    def test_detected_as_icloudsync(self):
+        state, res = detect_file("icloud_sync_671x348.png")
+        self.assertEqual("icloudsync", state, f"{state} と誤判定")
+        self.assertGreaterEqual(res["icloudsync"][0], res["icloudsync"][1])
+
+    def test_anchor_lands_on_not_now_button(self):
+        """着弾点が上の「今はしない」内で、下の青い「データの同期を再開」(y≥238) に掛からない。"""
+        _, res = detect_file("icloud_sync_671x348.png")
+        cx, cy = res["icloudsync"][2]
+        x = cx + AL.ANCH_ICLOUD_NO[0]
+        y = cy + AL.ANCH_ICLOUD_NO[1]
+        self.assertTrue(225 <= x <= 445 and 197 <= y <= 226,
+                        f"着弾 ({x:.0f},{y:.0f}) が「今はしない」ボタン外")

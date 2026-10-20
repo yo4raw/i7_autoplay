@@ -107,5 +107,37 @@ class TestConsensusCircles(unittest.TestCase):
             self.assertLess(abs(gx - ax), 0.01)
 
 
+class TestCalibrationGeometryGate(unittest.TestCase):
+    """2026-10-12 の誤較正事故の回帰: 装飾を円と誤検出した多数決が
+    prior から 27px 外れた値で確定し、円4のノーツを丸ごと見送った。
+    consensus は通過するが幾何検証で棄却されることを確認する。"""
+
+    def _al(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
+        import autolive as AL
+        return AL.AutoLive.__new__(AL.AutoLive)
+
+    GOOD = [(0.2280, 0.6598), (0.3335, 0.8233), (0.6626, 0.8233), (0.7699, 0.6558)]
+    BAD = [(0.2280, 0.6558), (0.3371, 0.8312), (0.6626, 0.8233), (0.8021, 0.7196)]
+
+    def test_accepts_symmetric_layout(self):
+        ok, why = self._al()._circles_geometry_ok(self.GOOD, self.GOOD)
+        self.assertTrue(ok, why)
+
+    def test_rejects_asymmetric_outer_pair(self):
+        """円4 だけ下に飛んだ形（実測の悪化ケース）を弾く。"""
+        ok, why = self._al()._circles_geometry_ok(self.BAD, self.GOOD)
+        self.assertFalse(ok)
+        self.assertIn("y1-y4", why)
+
+    def test_rejects_prior_jump(self):
+        """対称でも prior から一気に動きすぎる確定は弾く（ラチェット防止）。
+        一様にずらして対称性は保つが、prior からの距離が閾値を超える。"""
+        far = [(x, y + 0.12) for x, y in self.GOOD]
+        ok, why = self._al()._circles_geometry_ok(far, self.GOOD)
+        self.assertFalse(ok)
+        self.assertIn("跳躍", why)
+
+
 if __name__ == "__main__":
     unittest.main()

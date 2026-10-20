@@ -137,8 +137,6 @@ OFF_RESUME = (100.5, 72.5)        # PAUSE メニュー「再開」
 OFF_REPLAY_YES = (64.5, 65.5)     # 連続ライブ再プレイ「はい」
 OFF_DOWNLOAD = (56.5, 78.5)       # データDL「ダウンロード」
 OFF_STORY_NO = (-58.5, 69.5)      # ストーリー遷移「いいえ」
-OFF_KINAKO = (76.5, -11.5)        # LIFE不足ダイアログ きなこパン「回復」（上段。ステラ下段は触らない）
-OFF_LIFE_CONFIRM = (148.0, -44.5) # 「ライフをN回復しました」確認の×
 OFF_RANKUP_X = (159.5, -97.5)     # RANK UP! ×（大型カード右上）
 OFF_RESULT_ADV = (0.0, 2.0)       # Result/EVENT RESULT 中央送り
 OFF_MENU_SAFE = (0.0, 142.5)      # 未知メニューの安全タップ（中央やや下）
@@ -153,6 +151,9 @@ ANCH_RESUME = (100.0, 176.0)      # pause_resume 見出し → 再開ボタン�
                                   # 見出し(337,91)→再開(437,267)。旧161ではボタン上端に外れた）
 ANCH_REPLAY_YES = (86.0, 125.0)   # 連続ライブ 見出し → はい
 ANCH_DOWNLOAD = (55.0, 84.0)      # DL本文 → ダウンロード
+ANCH_IMESSAGE_NO = (-52.5, 123.5)  # iOS「iMessage と FaceTime をオンに」見出し → **使用しない**
+ANCH_ICLOUD_NO = (7.5, 105.0)      # iOS「一部の iCloud データは同期して」見出し → **今はしない**（下の青い「同期を再開」は押さない）
+                                   # （右の「オンにする」は SMS 送信で課金され得ると明記。絶対に押さない）
 ANCH_STORY_NO = (-68.0, 76.0)     # ストーリー本文 → いいえ
 ANCH_RESUME_YES = (64.0, 62.0)    # 「前回のライブを再開しますか？」→ はい（消費済みLIFEを回収）
 ANCH_DATAUPDATE_YES = (-1.0, 79.0)  # 「データ更新のためタイトルへ戻ります」→ はい
@@ -168,10 +169,14 @@ ANCH_LIVEASSIST_START = (203.0, 243.0)  # ライブアシスト見出し → STA
 # --- アプリ再起動からの復帰（2026-08-02 実機フレーム上で実測） ---
 ANCH_TITLE_TAP = (-277.0, -4.5)   # タイトル右下の MENU → 中央下の「TAP SCREEN」
 ANCH_NETERROR_RETRY = (66.0, 79.0)  # 「通信エラーが発生しました。」→ **リトライ**（左の諦めるは押さない）
+# 「通信がタイムアウトしました。」は本文テンプレを照合し、マッチ中心から「諦める」ボタンへ
+# （本文 (341,196) → ボタン (310,262) = (-31,+66)。ボタンはこれ1個だけ。リトライは無い）。
+ANCH_NETTIMEOUT_GIVEUP = (-31.0, 66.0)
 ANCH_SUPPORTED_YES = (-21.0, 84.5)  # 「…サポートしました。」→ はい（×が無いので背景タップでは閉じない）
 ANCH_DAILYTASK_X = (262.2, -14.2)   # 「本日の課題」見出し → 右上の ×
 MAX_NET_RETRIES = 8               # 通信エラーの連続リトライ上限（回線障害で無限に粘らない）
 ANCH_NEWS_CLOSE = (207.5, 6.5)    # お知らせヘッダ「お知らせ」 → 右上の ×
+ANCH_LIFEFULL_X = (126.0, -75.0)  # 「ライフを全回復しました。」本文 → カード右上の ×
 ANCH_BREAK_NO = (-73.0, 100.0)    # 休憩時間の確認本文 → **いいえ**（はいは絶対に押さない）
 # 1回の実行で復帰を試みる上限。超えたら安全停止する（同じ所を延々回るのを防ぐ）。
 MAX_RECOVERS = 3
@@ -190,7 +195,8 @@ MAX_SECONDS_GRACE = 300.0
 # LIFE 回復直後のローディング（判定は menu）でも抜けない。2026-09-12 05:56 実測: きなこパンで回復した
 # 直後のローディングで抜け、始まったライブが無人になった。
 SAFE_EXIT_STATES = ("result", "eventresult", "expresult", "cardx", "closex", "rankup",
-                    "friendreq", "replay", "songselect", "friendselect", "formation", "lifeshort")
+                    "friendreq", "replay", "songselect", "friendselect", "formation",
+                    "lifeshort", "lifefull")
 
 # ライブのタップ判定円（**4レーン**, 内容相対小数）。中央(0.49,0.93)はSCORE表示と重なる
 # ダミーで実在レーンではないため除外（無駄打ち＋SCOREアニメの誤検出を排除）。
@@ -219,7 +225,24 @@ NOTE_WHITE_V = 170               # min(R,G,B) > これ を「白っぽい（ノ�
 NOTE_TRIGGER_FRAC = 0.06         # white割合がベースライン+これ を超えたらタップ発火
 NOTE_BASELINE_FRAC = 0.20        # white割合がこれ未満の静穏フレームのみEMAベースラインに取り込む
 NOTE_BASELINE_EMA = 0.1          # ベースラインEMAの追従係数
-NOTE_DEBOUNCE_SEC = 0.18         # 1ノーツ=1タップ（タップ波紋の再発火も抑止）
+NOTE_DEBOUNCE_SEC = 0.18         # 同一円の再発火ガードの上限。これを超えれば発火可
+                                 # （タップ波紋の再発火を抑止する従来どおりの上限）。
+NOTE_REARM_FACTOR = 0.35         # トリガー超過分がこの割合まで下がれば「再武装」:
+                                 # 次ノーツを NOTE_MIN_GAP_SEC 後から受け付ける。
+                                 # 速い曲の16分連打（150ms間隔）を拾うための機構。
+                                 # 小さいほど再武装が遅れ密ノーツを見送り、大きいほど
+                                 # 波紋の残光で誤再武装→二重打鍵の危険が増える。
+NOTE_MIN_GAP_SEC = 0.09          # 再武装済みの場合の最小発火間隔（~16分@400bpm）。
+
+# --- タップ円較正の幾何検証（2026-10-12、誤検出の悪化補正対策） ---
+# ゲームの4円はほぼ左右対称（鏡像）。検出が装飾を円と取り違えたとき、多数決の中央値が
+# prior からゆっくりずれて「一度誤確定すると以後の補正が誤値を prior にして回り続ける」
+# 構造だった。コミット前に対称性を検査して拒否する（実測: 円4 が 27px 外へ確定し、
+# 円4のノーツを丸ごと見送った。復旧には手動でキャッシュを消す必要があった）。
+AUTOCAL_SYMMETRY_TOL = 0.05      # 円1↔4・円2↔3 の y差と、両対の中心xからの距離差の許容
+AUTOCAL_JUMP_TOL = 0.10          # 補正値が prior から一度に動ける最大距離（content相対）。
+                                 # 検出の裾野が「装飾」を拾っても、prior からこの距離以上に
+                                 # 飛ぶ確定は誤検出とみなす（実測の悪化: 円4 が 0.08 動いた）
 # --- ホールド（長押し＝緑ノーツ）対応。色ではなく「明るさが持続」することで検出する ---
 # 円ROIがトリガー超えのまま HOLD_SUSTAIN_FRAMES フレーム続いたら長押しノーツとみなし、
 # 明るさが続く限り押下を保持（drag で genuine 入力＝PAUSE防止）。タップ波紋の短い持続では
@@ -324,7 +347,9 @@ TEMPLATES = {
     "closex": ("close_x.png", 0.87),           # カード型ポップアップ右上の×（緑, 本物≈0.94）
                                                # ※Result画面の誤検出(≈0.84)を避けるため0.87
     "rankup": ("rankup.png", 0.78),            # 「RANK UP!」文字（× フォールバック用）
-    "dldialog": ("dl_dialog.png", 0.85),       # データDL確認ダイアログ本文「をダウンロードします。」
+    # しきい値 0.80: 2026-09-15 実機で 0.849 と 0.85 をわずかに割り、色判定の cardx に流れて
+    # cardx_stuck で停止した。コーパス上の非DL画面の最大は 0.584 で余裕がある（tests/test_detect_dialogs.py）。
+    "dldialog": ("dl_dialog.png", 0.80),       # データDL確認ダイアログ本文「をダウンロードします。」
     "story": ("story_dialog.png", 0.85),       # 「ストーリー開放チケット…遷移しますか？」→ いいえ
     # アプリ再起動後に出る「ライブスタート前にアプリが終了しました。前回のライブを再開
     # しますか？」→ **はい**。LIFE は既に消費済みなので、いいえ を選ぶと丸損になる。
@@ -343,6 +368,10 @@ TEMPLATES = {
     # シアン系ヘッダを持つため cardx と誤認され、背景タップでは閉じられず停滞していた
     # （実測 2026-08-03: 1745 回タップして cardx_stuck で停止）。
     "neterror": ("net_error.png", 0.85),
+    # 「通信がタイムアウトしました。」→ **諦める**（ボタンはこれ1個だけ・リトライなし）。
+    # neterror と同じシアン系ヘッダなので cardx に流れ、背景タップでは閉じられず
+    # cardx_stuck で停止した（2026-10-15 03:02 実機、134 クリア後）。
+    "nettimeout": ("net_timeout.png", 0.85),
     # 「ライブをN回サポートしました。/ NフレンドptをΩ手に入れました。」→ はい。
     # **×が無く「はい」だけ**なので cardx の背景タップでは閉じられず停滞する
     # （実測 2026-08-03: 4:00 の復帰導線でホーム到達直後に出る）。
@@ -360,10 +389,20 @@ TEMPLATES = {
     # 申請する押下後は friendreq が消えて未知画面化し停止していたため専用テンプレで送る。
     # KEEP OUT テープが他画面の同高さに出て斜体太字が構造相関する(≈0.67)ため閾値は高め(0.85)。
     "eventresult": ("eventresult_title.png", 0.85),
+    # 「ライフを全回復しました。」モーダル（回復カードと違い**背景タップでは閉じない**。×必須）。
+    # **songselect・cardx より先**: 楽曲選択や Event Result の上に重なって出るため、NEXT や
+    # closex のテンプレが背後に当たると永遠に閉じない（2026-10-11 実機: NEXT を約30回・
+    # cardx の背景タップを約30回踏んで停滞した）。
+    "lifefull": ("life_full.png", 0.80),       # 「ライフを全回復しました。」本文（×で閉じる）
     "songselect": ("song_select.png", 0.85),   # 楽曲選択画面の「NEXT」ボタン（連戦終了で戻る）
     "friendselect": ("friend_select.png", 0.85),  # フレンド（サポート）選択画面
     "formation": ("formation.png", 0.85),      # 編成画面の「START」ボタン
     "battery": ("battery_close.png", 0.80),    # iOSバッテリー残量低下警告の「閉じる」ボタン
+    # iOS「iMessage と FaceTime をオンにしますか？」の見出し。画面を暗転させ DARK_THRESH を
+    # 下回るため暗い側でも照合する（2026-09-16 07:39 実測、編成画面の上に出て gameplay_timeout 停止）。
+    "imessage": ("imessage_prompt.png", 0.80),
+    # iOS「一部の iCloud データは同期していません」の見出し（2026-09-16 19:43 実測、EVENT RESULT の上）。
+    "icloudsync": ("icloud_sync.png", 0.80),
     # --- アプリ再起動からの復帰（4:00 前後のデータ更新後）。2026-08-02 実機で導線を実測 ---
     # いずれも**イベント固有の絵は使わない**。バナーの絵柄は毎イベント変わるが、
     # 「TAP SCREEN」「お知らせ」「EVENT」ラベル帯・「イベント楽曲」・ダイアログ本文は変わらない。
@@ -403,8 +442,107 @@ TEMPLATES = {
 P_KINAKO_RECOVER = (0.644, 0.508)  # 「ライフが足りません」ダイアログ上段=きなこパンの「回復」
 P_LIFE_CONFIRM_X = (0.78, 0.41)    # 「ライフをN回復しました」確認ポップアップの×
 # ステラストーンの「回復」は下段(約 (0.644,0.69))にある。**絶対にクリックしない**。
-# きなこパン1個で LIFE +20 回復（ライブ消費16を上回る）。在庫切れ時はステラを使わず停止する。
+# 在庫切れ時はステラを使わず停止する。
 MAX_LIFE_RECOVERS = 6              # 連続でこの回数 LIFE 不足が続いたら（=きなこパン枯渇）停止
+# 1回の LIFE 回復で使うきなこパンの個数。きなこ行の数量ステッパー `[−][ 1 ][+]` の「+」を
+# (この値 − 1) 回押してから「回復」を押す。共鳴のきなこパンは 1個 LIFE +30、10倍ブーストの
+# ライブは LIFE -100 で、ライブ後はたいてい LIFE 20 → 3個で 110 になり1回で足りる。
+# 1個ずつだと「回復 → 確認 → LIFE不足ダイアログが再表示」を3周し、1周 3.3〜5.2 秒かかっていた
+# （2026-10-11 実測）。再表示のアニメ途中のフレームではきなこ行のスコアが 0.78 に落ち、
+# kinako_missing で周回が止まったこともある（同日 19:25）。
+KINAKO_PER_RECOVER = 3
+KINAKO_STEP_GAP = 0.3              # 「+」を押す間隔（秒）
+# きなこ行が見つからないときに、**クリックせずに**撮り直して確認し続ける時間（秒）。
+# ダイアログの再表示アニメ・通知バナーの重なりで一瞬だけ閾値を割ることがある（上記 19:25）。
+# 本当に枯渇しているなら行は消えたままなので、この時間の後に従来どおり停止する。
+KINAKO_RECHECK_SEC = 2.0
+KINAKO_RECHECK_GAP = 0.25
+# 行が安定して見えてから「数量確定 → + → 数量再確定 → 回復」までの予算（秒）。
+# KINAKO_RECHECK_SEC(2.0s) は「行を発見する」ための予算で、1反復が ~0.9s（grab+照合+
+# sleep）ある実機では数量欄の確定読み（連続2〜3枚）にすら届かず unsettled で空転した
+# （2026-10-14 実機: 8回再判定して停止）。行が見えている間はこの予算を使う。
+KINAKO_SETTLE_SEC = 10.0
+# 「+」/「−」を押した直後の再確定に使う予算（秒）。押下で期限が尽きないよう延ばす。
+KINAKO_POST_CLICK_SEC = 4.0
+# 行が見え続ける限界（秒）。キラキラ演出等で ok が間欠しても deadline が伸び続ける
+# 設計にしたため、無制限に待たない絶対上限を別に設ける。超えたら unsettled でやり直す。
+KINAKO_RECOVER_MAX_SEC = 30.0
+# 「+」を押したことを覚えておく秒数。この間に同じダイアログへ戻っても「+」を押し直さない
+# （「回復」を押せずにやり直すたびに「+」を押して数量が 1→3→5→…→10 と増えた。2026-10-11 実機）。
+# 1回の _recover_life は最大 KINAKO_RECOVER_MAX_SEC(30s) 掛かるため、メモリはその数倍必要。
+# 20s では同じダイアログをまたぐ再判定で期限切れになり「+」を再押した（2026-10-14）。
+KINAKO_PLUS_MEMORY_SEC = 90.0
+# 「回復」を押せないまま（何もクリックせずに）lifeshort をやり直す回数の上限。超えたら停止。
+# **やり直しは MAX_LIFE_RECOVERS（きなこ枯渇の判定）には数えない**（回復していないので）。
+MAX_LIFE_UNSETTLED = 8
+KINAKO_QTY3_MIN = 0.95            # 数量欄「3」の字形照合のしきい値（「3」1.00、それ以外 ≤0.88）
+KINAKO_OVERCAP_PX = 300           # 「上限を超えています」バッジとみなす赤画素数（実測 760〜812、平常 0）
+KINAKO_MINUS_MAX = 12             # 1回の回復で「−」を押す上限（数量を 3 へ戻す）
+# 数量欄の確定に必要な読み取り数。「1」「3」は連続2回の一致で確定。それ以外（「2」「4」…）
+# は3回にする: 「+」の後のカウントアップ（1→2→3）の途中の一瞬の「2」を「3より多い」と
+# 誤認して「−」を押さないため（実機で「+」×2の直後のフレームで起きうる）。
+KINAKO_SETTLE_READS = 2
+KINAKO_OTHER_READS = 3
+# 「NEXT を押しても画面が変わらない」が続く回数の上限（その間に detect は songselect を
+# 返し続ける）。2026-10-11 実機: 「ライフを全回復しました。」モーダルが楽曲選択の上に出て
+# NEXT を約30回・60秒飲み込んだ。モーダルは lifefull で検出するようになったが、同種の
+# 見えない蓋がまた起きても延々と空打ちしないよう、回数で止める（次に detect が
+# モーダル等を返した時点でリセットされる）。
+SONGSELECT_NOCHANGE_MAX = 6
+LIFE_CARD_MIN = 0.43              # life_card_like のしきい値（回復カード 0.46〜0.48、他画面 ≤0.38）
+# 「回復」を押した後、LIFE 不足ダイアログが消える（＝確認カードに替わる）のを待つ上限（秒）。
+# ダイアログが残ったまま確認カードを閉じにいくと、近くにあるダイアログの×を
+# 叩いて回復ごと取り消しうるので、消えたのを見てから押す。
+LIFE_CONFIRM_WAIT_SEC = 2.0
+# 送り画面（result / eventresult / expresult / cardx）での連続タップ。
+# 1回の detect() が 1〜3 秒かかるため、「detect → 1タップ」では送りの実効間隔がその秒数になる。
+# 画面が送り画面のままであることを安いガードで確かめながら、短い間隔で続けて叩く。
+# Result 系の同じ状態に右側タップで連続この秒数留まったら、右側が効かない画面とみなして
+# その状態だけ中央送りへ戻す（1ページは通常 3〜5 秒。RESULT_STUCK_SEC=30 より十分短い）。
+ADVANCE_ALT_SEC = 10.0
+ADVANCE_BURST_TAPS = 6             # 1回の連続タップの上限回数（その後は通常の detect に戻る）
+ADVANCE_BURST_SEC = 4.0            # 1回の連続タップの上限時間（秒）
+ADVANCE_BURST_GAP = 0.25           # タップ後、次のガードまでの待ち（秒）
+ADVANCE_STABLE_GAP = 0.06          # 安定判定の2枚撮りの間隔（秒）
+# 安定判定: 2枚の縮小グレー画像の平均絶対差がこれ未満なら「静止している」。
+# ダイアログの出現アニメ・画面遷移の途中では叩かない（実測: 静止したカード 0.1〜0.2、
+# Result のカウントアップ 5 秒で 2.6、画面の切り替わり 17〜110）。
+ADVANCE_STABLE_DIFF = 3.0
+# 「同じ画面のまま」とみなす差の上限。これ以上変わったら別の画面（または画面が進んだ）とみなす
+# （実測: 同じ確認カード・同じダイアログ 0.1〜0.2、Event Result → 連続ライブダイアログ 52、
+# LIFE不足ダイアログ → 回復の確認カード 40〜43）。
+ADVANCE_SAME_DIFF = 8.0
+# 連続タップを止めるダイアログ。送り画面の上に重なって出るもの（連続ライブ「いいえ/はい」は
+# friendreq テンプレがピンクの「はい」に当たる。実測 2026-10-11）。songselect は範囲限定で別に見る。
+ADVANCE_GUARD_KEYS = ("lifeshort", "friendreq", "replay", "rankup", "lifefull")
+# 照合を並列に回すワーカー数。cv2 は照合中に GIL を解放するので、同じ BGR フレームに対する
+# キー別の match_best をスレッドで並べると、直列と**同一の結果**を短時間で得られる
+# （実測 2026-10-11, 10コア: 直列 3.7〜4.2 秒 → 8 ワーカー 1.0〜1.7 秒。4 / 12 ワーカーは遅い）。
+MATCH_WORKERS = 8
+_MATCH_POOL = None
+
+
+def match_pool():
+    """テンプレ照合用の常駐スレッドプール（フレームごとに作らない）。"""
+    global _MATCH_POOL
+    if _MATCH_POOL is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _MATCH_POOL = ThreadPoolExecutor(MATCH_WORKERS, thread_name_prefix="i7match")
+    return _MATCH_POOL
+
+
+# 明るいフレームで detect() が m() に渡すキーの並び。**detect() 本体の m("…") の出現順と同じ**
+# （tests/test_detect_prefetch.py がソースと突き合わせる）。明るいフレームでは、この順に
+# 全キーの照合を match_pool() へ先に投げ、m() はその結果を順に読む。判定順は m() の呼び順の
+# ままなので結果は直列と同じで、待ち時間だけが並列になる。
+BRIGHT_KEYS = (
+    "pause", "imessage", "icloudsync", "battery", "lifeshort", "friendreq", "replay",
+    "rankup", "dldialog", "story", "resumelive", "dataupdate", "resendresult", "neterror",
+    "nettimeout",
+    "supported", "liveassist", "formation", "breaktime", "title", "notice", "news",
+    "eventtop", "loginbonus", "speciallogin", "home", "dailytask", "lifefull",
+    "expresult", "friendselect", "closex", "eventresult", "result",
+)
 # テンプレ照合のスケール候補。端末でUIサイズはほぼ同じ(≈1.0で一致)だが、機種差に備え
 # ±20%程度を見て数点を試す（タイトルバー有無の0.86も維持）。
 # テンプレ照合のスケール段数。**1段増えるごとに全画面照合が1回増える**ので、明るい画面の
@@ -461,6 +599,19 @@ SONGSELECT_SEARCH_BOX = (0.58, 0.68, 1.0, 1.0)
 EVENTRESULT_SEARCH_BOX = (0.05, 0.05, 0.60, 0.40)
 # 「本日の課題」見出しの出現範囲（実測: 529x334 で中心 (0.33,0.22)、671x348 で (0.36,0.21)）。
 DAILYTASK_SEARCH_BOX = (0.15, 0.08, 0.60, 0.40)
+# iOS システムダイアログ（iMessage/FaceTime 確認）の見出し。中央上寄りに固定（実測 x≈0.35-0.64, y≈0.34）。
+IMESSAGE_SEARCH_BOX = (0.25, 0.20, 0.75, 0.50)
+ICLOUD_SEARCH_BOX = (0.25, 0.15, 0.75, 0.45)      # iCloud 同期ダイアログの見出し（実測 y≈0.30）
+# 暗い側の救済照合（DARK_RECHECK_SEC ごとに1回走る枠）の対象キーと探索範囲。
+# 判定順はこの並びで、pause の次に確認する。新しい「暗くて gameplay に見える画面」を
+# 追加したらここへ登録する（detect() もこのリストを辿る）。
+DARK_RESCUE_KEYS = (
+    ("songselect", SONGSELECT_SEARCH_BOX),
+    ("dailytask", DAILYTASK_SEARCH_BOX),
+    ("eventresult", EVENTRESULT_SEARCH_BOX),
+    ("imessage", IMESSAGE_SEARCH_BOX),
+    ("icloudsync", ICLOUD_SEARCH_BOX),
+)
 # 未知の明るいダイアログにこの秒数留まったら、ステラ誤使用を避けて停止する。
 # （LIFE 回復ダイアログ等の未知画面でボタンを盲目クリックしないための安全装置）
 STUCK_STOP_SEC = 25.0
@@ -473,9 +624,22 @@ RESULT_STUCK_SEC = 30.0
 # なので、余裕を見て 240秒。ミラーリング切断時の暗い「iPhoneが使用されました」オーバーレイ
 # を gameplay と誤認して延々タップし続けるのを防ぐ（明るくないので menu watchdog では止まらない）。
 GAMEPLAY_TIMEOUT_SEC = 240.0
+# PAUSE がこの秒数続いたら異常とみなす。「再開」は毎ループ（≈0.6 秒おき）押しているので、
+# 続くのは合成クリックが効かない再接続病か、PAUSE の上に別ダイアログが重なっている場合。
+# 実測 2026-09-14: リザルト直後に gameplay を経ず pause へ入ったため gameplay_since が始動せず、
+# GAMEPLAY_TIMEOUT が効かないまま 57 分間 0.6 秒周期で PAUSE→再開を繰り返した。
+PAUSE_STUCK_SEC = 60.0
 # gameplay がこの秒数継続して初めて「ライブ中」とみなす（クリア二重計上防止）。
 # リザルト間の暗い遷移は数秒で終わるため、1ライブ(≈115s)未満の閾値にする。
 MIN_LIVE_SEC = 20.0
+# gameplay/pause 以外の画面がこの秒数だけ続いたら gameplay_since をリセットする。
+# それ未満の中断（ライブ中の明るい演出で数秒 menu に落ちる・リザルト間の暗い遷移）は
+# 「ライブは続いている」とみなす。2026-10-11 実機: 曲の演出で 5〜15 秒ごとに menu が
+# 1〜2 秒挟まり、gameplay_since が毎回リセットされて was_in_live が一切立たず、
+# クリアが 1 回も計上されないまま 2 回目の START で live_abandoned 停止した。
+# 閾値は「演出の切れ目（実測 1〜3 秒）より十分長く・明るい画面への本格的な離脱
+# （result/lifeshort 等は数秒〜十数秒）より十分短い」値にする。
+GAMEPLAY_GAP_SEC = 4.0
 
 
 def frame_brightness(frame_rgb):
@@ -562,6 +726,178 @@ def kinako_recover_point(frame_rgb, row_pos):
     if best is not None:
         return best[1]
     return (row_pos[0] + ANCH_KINAKO_ROW[0], row_pos[1] + ANCH_KINAKO_ROW[1])
+
+
+def kinako_plus_point(frame_rgb, recover_pt):
+    """きなこパン行の数量ステッパー `[−][ 1 ][+]` の「+」中心 (x, y) を返す。無ければ None。
+
+    **必ず「きなこパン行が実在する」確認を通し、その行から求めた `recover_pt`
+    （`kinako_recover_point` の戻り値＝きなこ行の「回復」ボタン）を渡すこと。**
+
+    探す範囲は「回復」ボタンと**同じ高さの帯（±0.04h）**で、ボタンの**左側**だけに限る。
+    ステラストーン行は 0.26h 下にあり、しかもステッパーを持たない（数量欄に数字があるだけ）
+    ので、この帯には入らない。条件（実測 2026-10-11, 671x348: 十字 9〜10px 角・
+    青い箱 (285..363, 163..186) の中、回復ボタン中心の約 60px 左）:
+
+    - 白い (min(R,G,B) > 170) 連結成分で、ほぼ正方形・幅と高さが 0.009〜0.022w
+    - 中央の横一行と縦一列がほぼ埋まり、四隅は空いている（十字の形。数字やラベルの文字を除く）
+    - 周囲の白以外の画素の 6 割以上が青（ステッパーの青い箱の中にある）
+
+    候補が複数あれば最も右（＝「回復」に最も近い）を採る。「−」は横棒だけなので
+    縦一列の条件で落ちる。
+    """
+    h, w = frame_rgb.shape[:2]
+    band = int(round(0.04 * h))
+    cy0 = int(round(recover_pt[1]))
+    y0, y1 = max(0, cy0 - band), min(h, cy0 + band + 1)
+    x0, x1 = max(0, int(recover_pt[0] - 0.15 * w)), int(recover_pt[0] - 0.04 * w)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    sub = frame_rgb[y0:y1, x0:x1].astype(int)
+    R, G, B = sub[..., 0], sub[..., 1], sub[..., 2]
+    white = (R > 170) & (G > 170) & (B > 170)
+    blue = (B - R > 40) & (B > 110) & (R < 130)
+    n, lbl, st, _ = cv2.connectedComponentsWithStats(white.astype(np.uint8), 8)
+    lo, hi = 0.009 * w, 0.022 * w
+    best = None
+    for i in range(1, n):
+        x, y, bw, bh, _area = st[i]
+        if not (lo <= bw <= hi and lo <= bh <= hi) or abs(int(bw) - int(bh)) > 2:
+            continue
+        comp = lbl[y:y + bh, x:x + bw] == i
+        if comp[bh // 2].sum() < 0.7 * bw or comp[:, bw // 2].sum() < 0.7 * bh:
+            continue
+        if comp[0, 0] or comp[0, -1] or comp[-1, 0] or comp[-1, -1]:
+            continue
+        pad = max(2, int(bw) // 3)
+        py0, px0 = max(0, y - pad), max(0, x - pad)
+        around_white = white[py0:y + bh + pad, px0:x + bw + pad]
+        around_blue = blue[py0:y + bh + pad, px0:x + bw + pad]
+        if around_blue.sum() < 0.6 * max(1, (~around_white).sum()):
+            continue
+        cx, cy = x0 + x + bw / 2.0, y0 + y + bh / 2.0
+        if best is None or cx > best[0]:
+            best = (float(cx), float(cy))
+    return best
+
+
+def _kinako_qty_box(frame_rgb, plus_pt):
+    """数量欄（「−」と「+」の間）の切り出し範囲 (x0, x1, y0, y1)。"""
+    h, w = frame_rgb.shape[:2]
+    return (max(0, int(plus_pt[0] - 0.06 * w)), int(plus_pt[0] - 0.012 * w),
+            max(0, int(plus_pt[1] - 0.025 * h)), int(plus_pt[1] + 0.025 * h) + 1)
+
+
+def kinako_qty_is_one(frame_rgb, plus_pt):
+    """きなこ行の数量欄が「1」を表示しているか（ダイアログを開いた直後は 1）。
+
+    数字「1」は縦一本（幅 1〜2px・高さ 7px@671x348）。3 以上は幅 5px 以上ある。
+    min(R,G,B) > 140 の画素の外接矩形が細く縦長なら 1 とみなす。判らなければ False。
+    """
+    h, w = frame_rgb.shape[:2]
+    x0, x1, y0, y1 = _kinako_qty_box(frame_rgb, plus_pt)
+    sub = frame_rgb[y0:y1, x0:x1]
+    if sub.size == 0:
+        return False
+    ys, xs = np.where(sub.min(axis=2) > 140)
+    if len(xs) == 0:
+        return False
+    bw, bh = xs.max() - xs.min() + 1, ys.max() - ys.min() + 1
+    return bool(bw <= 0.0045 * w + 0.5 and bh >= 0.015 * h)
+
+
+_QTY3 = None
+
+
+def _qty3_glyphs():
+    """数量欄「3」の字形テンプレ群（kinako_qty3*.png）。テーマ/機種で色・形が変わるため
+    バリアントを並べ、いずれかが当たればよい（2026-10-14: 既存のグレー字形が
+    Encounter Love Song のテーマで 0.856 に落ち、数量3を読めず unsettled した）。"""
+    global _QTY3
+    if _QTY3 is None:
+        import glob
+        _QTY3 = [cv2.imread(p, cv2.IMREAD_GRAYSCALE)
+                 for p in sorted(glob.glob(os.path.join(TEMPLATE_DIR, "kinako_qty3*.png")))]
+        _QTY3 = [g for g in _QTY3 if g is not None]
+    return _QTY3
+
+
+def kinako_qty_is_three(frame_rgb, plus_pt):
+    """数量欄が「3」か。実機の数量欄から切り出した「3」の字形群（グレー）と
+    数量欄を照合する（実測: 「3」1.00 / 「1」0.47 / 「5」〜「10」0.38〜0.69。演出の重なりで 0.83〜0.88）。"""
+    x0, x1, y0, y1 = _kinako_qty_box(frame_rgb, plus_pt)
+    sub = cv2.cvtColor(np.ascontiguousarray(frame_rgb[y0:y1, x0:x1]), cv2.COLOR_RGB2GRAY)
+    best = 0.0
+    for g3 in _qty3_glyphs():
+        th, tw = g3.shape[:2]
+        if sub.shape[0] < th or sub.shape[1] < tw:
+            continue
+        best = max(best, float(cv2.matchTemplate(sub, g3, cv2.TM_CCOEFF_NORMED).max()))
+    return best >= KINAKO_QTY3_MIN
+
+
+def kinako_minus_point(frame_rgb, plus_pt):
+    """同じステッパーの「−」中心。「−」は青い箱の左端にあり、「+」からの距離は端末間で同じ px
+    （実測 671x348: 「−」の白い横棒 x 289..298, y 173..175、「+」中心 (354.5, 174.5)）。
+    白い横棒を「+」と同じ高さ・その左 0.07〜0.11w で探す。見つからなければ None。"""
+    h, w = frame_rgb.shape[:2]
+    y0, y1 = max(0, int(plus_pt[1] - 0.015 * h)), int(plus_pt[1] + 0.015 * h) + 1
+    x0, x1 = max(0, int(plus_pt[0] - 0.11 * w)), int(plus_pt[0] - 0.07 * w)
+    sub = frame_rgb[y0:y1, x0:x1]
+    if sub.size == 0:
+        return None
+    ys, xs = np.where(sub.min(axis=2) > 170)
+    if len(xs) < 6:
+        return None
+    bw, bh = xs.max() - xs.min() + 1, ys.max() - ys.min() + 1
+    if not (bw >= 0.009 * w and bh <= 0.012 * h + 1):     # 横長の棒だけ
+        return None
+    return (float(x0 + (xs.min() + xs.max()) / 2.0), float(y0 + (ys.min() + ys.max()) / 2.0))
+
+
+def kinako_over_cap(frame_rgb, recover_pt):
+    """きなこ行の「回復」ボタンの真上に赤い「上限を超えています」バッジが出ているか。
+    数量が多すぎて LIFE 上限を超える時に出る（2026-10-11 実機。赤 R>180,G<110,B<110 が
+    約 800px）。探す範囲はきなこ行の「回復」ボタンの上 0.10h・左右 ±0.10w だけ。"""
+    h, w = frame_rgb.shape[:2]
+    y0, y1 = max(0, int(recover_pt[1] - 0.10 * h)), max(0, int(recover_pt[1] - 0.02 * h))
+    x0, x1 = max(0, int(recover_pt[0] - 0.10 * w)), min(w, int(recover_pt[0] + 0.10 * w))
+    s = frame_rgb[y0:y1, x0:x1].astype(int)
+    if s.size == 0:
+        return False
+    red = (s[..., 0] > 180) & (s[..., 1] < 110) & (s[..., 2] < 110)
+    return int(red.sum()) >= KINAKO_OVERCAP_PX
+
+
+
+def life_card_like(frame_rgb):
+    """「ライフを30回復しました」等の LIFE 回復**カード**（背景タップで閉じる）か。
+
+    中央に**薄い水色の大きなカード**（min(R,G,B)>185 かつ B−R が 12〜60）を出す。
+    画面中央 (0.30..0.70, 0.30..0.62) に占める割合が LIFE_CARD_MIN 以上ならカードとみなす
+    （実測 2026-10-11: 回復カード 0.46〜0.48。コーパス・フィクスチャの他画面は最大 0.38＝
+    連続ライブダイアログ、LIFE不足ダイアログ 0.31）。背景タップ P_CARD_DISMISS で閉じる。
+
+    **「ライフを全回復しました。」はこれでは拾えない**（白いカードで色が違う＝False。
+    しかも背景タップでは閉じない）。あちらはテンプレ照合の `lifefull` で × を押す。
+    """
+    h, w = frame_rgb.shape[:2]
+    s = frame_rgb[int(.30 * h):int(.62 * h), int(.30 * w):int(.70 * w)].astype(np.int16)
+    if s.size == 0:
+        return False
+    m = (s.min(axis=2) > 185) & (s[..., 2] - s[..., 0] >= 12) & (s[..., 2] - s[..., 0] <= 60)
+    return float(m.mean()) >= LIFE_CARD_MIN
+
+
+def frame_diff(a_rgb, b_rgb):
+    """2フレームの縮小グレー画像の平均絶対差（静止判定用。1回 1ms 未満）。"""
+    def small(f):
+        g = cv2.cvtColor(f, cv2.COLOR_RGB2GRAY)
+        return cv2.resize(g, (max(1, g.shape[1] // 4), max(1, g.shape[0] // 4)),
+                          interpolation=cv2.INTER_AREA).astype(np.int16)
+    if a_rgb.shape != b_rgb.shape:
+        return 255.0
+    return float(np.abs(small(a_rgb) - small(b_rgb)).mean())
 
 
 def detect_card_x(frame_rgb):
@@ -677,10 +1013,13 @@ class AutoLive:
         self.circle_i = 0
         self.closex_i = 0           # closex 候補位置の巡回インデックス
         self.life_recovers = 0      # 連続 LIFE 回復回数（きなこパン枯渇検知用）
+        self.advance_alt = {}       # 送り画面ごとに、右側タップが効かなかったら中央へ切り替える印
+        self.advance_since = None   # (Result 系の状態, その状態が続き始めた時刻)
         self.recovers = 0           # アプリ再起動からの復帰試行回数（暴走防止）
         self.in_recovery = False    # 復帰導線の途中か（周回に戻ると下りる）
         self.net_retries = 0        # 通信エラーの連続リトライ回数
         self.gameplay_since = None  # gameplay 連続継続の開始時刻（異常検知用）
+        self.pause_since = None     # pause 連続継続の開始時刻（「再開」が効かない停滞の検知用）
         # --- タイミング検出（timing モード）用 ---
         self.note_baseline = [None] * len(CIRCLES)  # 円ごとの white割合 EMA ベースライン
         self.note_last_tap = [0.0] * len(CIRCLES)   # 円ごとの直近タップ時刻（デバウンス）
@@ -688,6 +1027,7 @@ class AutoLive:
         self.green_hold = green_hold  # 緑ノーツの長押し（色方式）
         self.hold_max_sec = hold_max_sec
         self.note_hi_frames = [0] * len(CIRCLES)  # 円ごとのトリガー超持続フレーム数（長押し検出）
+        self.note_rearmed = [True] * len(CIRCLES)   # 発火後に白率が一度下がると True（次ノーツ受付）
         self.hold_idx = None        # 現在ホールド中の円index（Noneなら非ホールド）
         self.hold_start = 0.0       # ホールド開始時刻（HOLD_MAX_SEC上限用）
         # --- ノーツ種別対応（赤=フリック）。到達直前ROIの色で判定（§17.9） ---
@@ -732,6 +1072,8 @@ class AutoLive:
         self.menu_since = None      # 同じメニューに留まり始めた時刻
         self.result_since = None    # result/eventresult を送り始めた時刻（無限ループ検知用）
         self._last_dark_check = 0.0  # 暗い画面で pause/songselect を最後に照合した時刻（間引き用）
+        self.songsel_nochg = 0      # NEXT を押しても画面が変わらなかった連続回数
+        self._gp_left_ts = self.t_start  # gameplay/pause を最後に見た時刻（ギャップ許容用）
         self.dbg_dir = "/tmp/i7dbg"
         os.makedirs(self.dbg_dir, exist_ok=True)
         # (top,bottom) px。**固定** (TITLEBAR_ROWS, h-9)。円の較正キャッシュ・OFF_* と同じ基準。
@@ -1104,7 +1446,15 @@ class AutoLive:
                 cached = json.load(fh).get(self._autocal_key())
             if not cached or len(cached) != len(CIRCLES):
                 return
-            CIRCLES[:] = [(float(x), float(y)) for x, y in cached]
+            cand = [(float(x), float(y)) for x, y in cached]
+            # キャッシュもコミットと同じ幾何検証を通す（2026-10-12）。
+            # 装飾の誤検出で一度悪い値が保存されると、prior として読み込まれて以後の
+            # 補正が誤値を基準に回り続けていた（実測: 円4 が 27px 外れた値が復元→再確定）。
+            ok, why = self._circles_geometry_ok(cand, list(CIRCLES))
+            if not ok:
+                self.log(f"[auto-circles] キャッシュを棄却（幾何検証失敗: {why}）: {cand}")
+                return
+            CIRCLES[:] = cand
             self.circles_calibrated = True
             self.log(f"[auto-circles] 前回の補正値を復元（{self._autocal_key()}）: {CIRCLES}")
         except Exception:
@@ -1121,6 +1471,30 @@ class AutoLive:
                 json.dump(data, fh, ensure_ascii=False, indent=1)
         except Exception as e:
             self.log(f"[auto-circles] 補正値の保存に失敗（動作には影響なし）: {e}")
+
+    def _circles_geometry_ok(self, circles, prior):
+        """較正コミット前の幾何検証（2026-10-12、誤検出で悪化する構造欠陥の対策）。
+
+        i7 のタップ円はほぼ左右対称（鏡像）: 外側ペア(円1,4)の y が揃い、内側ペア(円2,3)の
+        y が揃い、x 座標も画面中心からほぼ等距離。装飾・スコア文字を Hough が円と誤検出した
+        場合この対称性が崩れる（実測: 円4 が 27px 外れ、円4のノーツを丸ごと見送った）。
+        あわせて「prior から一気に大きく動く」補正を弾き、誤確定が次回 prior に
+        乗って回り続けるラチェットを断つ。
+        """
+        (x1, y1), (x2, y2), (x3, y3), (x4, y4) = circles
+        if abs(y1 - y4) > AUTOCAL_SYMMETRY_TOL:
+            return False, f"外側ペアの高さ不一致 |y1-y4|={abs(y1 - y4):.3f}"
+        if abs(y2 - y3) > AUTOCAL_SYMMETRY_TOL:
+            return False, f"内側ペアの高さ不一致 |y2-y3|={abs(y2 - y3):.3f}"
+        outer = abs(abs(x4 - 0.5) - abs(x1 - 0.5))
+        inner = abs(abs(x3 - 0.5) - abs(x2 - 0.5))
+        if outer > AUTOCAL_SYMMETRY_TOL or inner > AUTOCAL_SYMMETRY_TOL:
+            return False, f"左右非対称 outer={outer:.3f} inner={inner:.3f}"
+        jump = max(((nx - px) ** 2 + (ny - py) ** 2) ** 0.5
+                   for (nx, ny), (px, py) in zip(circles, prior))
+        if jump > AUTOCAL_JUMP_TOL:
+            return False, f"prior からの跳躍 {jump:.3f} > {AUTOCAL_JUMP_TOL}"
+        return True, ""
 
     def _auto_calibrate_circles(self, frame):
         """--auto-circles: ライブ突入時にタップ円リングを検出し CIRCLES を実測へ補正。
@@ -1147,6 +1521,10 @@ class AutoLive:
                              f"（再試行 {self._autocal_fail_n}回目）")
                 return
             old = list(CIRCLES)
+            ok, why = self._circles_geometry_ok(matched, old)
+            if not ok:
+                self.log(f"[auto-circles] 補正値が幾何検証で棄却（現行値を維持）: {why}")
+                return
             CIRCLES[:] = matched
             self.circles_calibrated = True
             self.tracker = None   # 旧レーン座標で作られた追跡系を破棄（次フレームで再生成）
@@ -1193,6 +1571,11 @@ class AutoLive:
                 self.note_hi_frames[i] += 1
             else:
                 self.note_hi_frames[i] = 0
+                # 再武装: トリガー超過分が NOTE_REARM_FACTOR まで下がれば、次ノーツを
+                # デバウンスより早く受け付ける。速い曲の16分連打（~150ms）を拾うため。
+                # 波紋の残光で誤再武装しないよう、トリガー未満まで十分下げた場合に限る。
+                if wf[i] < base + self.note_trigger * NOTE_REARM_FACTOR:
+                    self.note_rearmed[i] = True
                 if wf[i] < NOTE_BASELINE_FRAC:  # 静穏時のみベースライン取り込み
                     self.note_baseline[i] = base + (wf[i] - base) * NOTE_BASELINE_EMA
 
@@ -1307,7 +1690,13 @@ class AutoLive:
         # 3) 通常検出: 発火円をタップ。明るさが長く持続していれば長押しへ昇格（押下保持）。
         tapped = False
         for i in range(len(CIRCLES)):
-            if now - self.note_last_tap[i] < NOTE_DEBOUNCE_SEC:
+            # 発火間隔の制御（2026-10-12、速い曲対応）:
+            #   デバウンス期間内でも「一度白率が十分下がった（再武装）」円は新ノーツと
+            #   みなし NOTE_MIN_GAP_SEC 以降なら発火する。16分連打（~150ms間隔）を拾う。
+            #   再武装していない＝波紋の残光と区別できないので従来どおり弾く。
+            dt = now - self.note_last_tap[i]
+            if not (dt >= NOTE_DEBOUNCE_SEC
+                    or (self.note_rearmed[i] and dt >= NOTE_MIN_GAP_SEC)):
                 continue
             if not fired[i]:
                 continue
@@ -1327,6 +1716,7 @@ class AutoLive:
                 self.hold_idx = i
                 self.hold_start = now
                 self.last_input_ts = now
+                self.note_rearmed[i] = False
                 if self.verbose:
                     # ピークを出す。現在値は着弾直前に ROI を抜けかけて下がるため、
                     # そのまま出すとしきい値割れに見えて誤解を招く。
@@ -1345,6 +1735,7 @@ class AutoLive:
                 self.hold_idx = i
                 self.hold_start = now
                 self.last_input_ts = now
+                self.note_rearmed[i] = False
                 if self.verbose:
                     self.log(f"ホールド開始 円{i}（解除予定 +{self.hold_release_at - now:.2f}s）")
                 tapped = True
@@ -1355,6 +1746,7 @@ class AutoLive:
                 self.hold_idx = i
                 self.hold_start = now
                 self.last_input_ts = now
+                self.note_rearmed[i] = False
                 if self.verbose:
                     self.log(f"長押し開始 円{i}")
                 tapped = True
@@ -1367,6 +1759,7 @@ class AutoLive:
             else:
                 self.click_content(*self._tap_point(i))  # 通常タップ（down+up）
             self.note_last_tap[i] = now
+            self.note_rearmed[i] = False   # 発火したので一度下がるまで次を受け付けない
             self.last_input_ts = now
             self.tap_count += 1
             tapped = True
@@ -1579,11 +1972,23 @@ class AutoLive:
 
         bright = frame_brightness(frame_rgb)
         res = {"_bright": (bright, 0, None)}
+        # 明るいフレームでは BRIGHT_KEYS の照合を先に並列で投げておき（下の prefetch）、
+        # m() はその結果を読む。**判定は m() の呼び順＝下の if の並びで決まる**ので、
+        # 直列で1つずつ照合していた頃と state・res は同一（tests/test_detect_prefetch.py）。
+        pending = {}
+
+        def stop_prefetch():
+            # 状態が決まったら、まだ始まっていない照合を取り消す（次の処理と CPU を奪い合わない）。
+            for fut in pending.values():
+                fut.cancel()
 
         def m(key):
             imgs, thr = self.templates[key]
-            score, pos = match_best(frame_bgr(), imgs)
+            fut = pending.get(key)
+            score, pos = fut.result() if fut is not None else match_best(frame_bgr(), imgs)
             res[key] = (score, thr, pos)
+            if score >= thr:
+                stop_prefetch()
             return score >= thr
 
         # 薄暗いフレーム（DARK_THRESH〜DIM_THRESH）はリングが見えていればライブ中とみなす（DIM_THRESH の注記）。
@@ -1601,47 +2006,72 @@ class AutoLive:
             now_t = time.time()
             if now_t - self._last_dark_check >= DARK_RECHECK_SEC:
                 self._last_dark_check = now_t
-                # 探索範囲を絞って照合（全画面照合は重すぎて打鍵ループを止めてしまう）
-                imgs, thr = self.templates["pause"]
-                score, pos = match_in_box(frame_bgr(), imgs, PAUSE_SEARCH_BOX)
-                res["pause"] = (score, thr, pos)
-                if score >= thr:
-                    return "pause", res
                 # **暗い側の救済照合はすべて範囲限定で行う。** 全画面照合のままだと、
                 # ウィンドウ上端の透過部に明るい別ウィンドウが写り込んで輝度が 50 を超えた
                 # だけで、0.7 秒ごとの再照合が 26ms → 297ms に跳ね、ライブ中のループ時間の
                 # 約4割を失う（実測 2026-09-11: 判定 2136 フレーム・打鍵 301 回・グレード C）。
-                if bright > 50.0 and not rings:
-                    _imgs, _thr = self.templates["songselect"]
-                    _sc, _pos = match_in_box(frame_bgr(), _imgs, SONGSELECT_SEARCH_BOX)
-                    res["songselect"] = (_sc, _thr, _pos)
-                    if _sc >= _thr:
-                        return "songselect", res
+                # 直列でも 113ms あり「まばたき」の間にノーツを見送る（実測 2026-10-12）。
+                # 明るい側と同じく照合をプールへ並列で投げ、結果を判定順に読む。
+                _pool = match_pool()
+                dark_pending = {
+                    "pause": _pool.submit(match_in_box, frame_bgr(),
+                                          self.templates["pause"][0], PAUSE_SEARCH_BOX),
+                }
+                # 救済照合が要るのは「暗めだが真っ暗ではなくリングも見えない」フレームだけ。
+                # 真っ暗（bright≤50）やリング確認済みの gameplay では投げない（無駄なCPUを避ける）。
+                need_rescue = bright > 50.0 and not rings
+                if need_rescue:
+                    for _k, _box in DARK_RESCUE_KEYS:
+                        dark_pending[_k] = _pool.submit(
+                            match_in_box, frame_bgr(), self.templates[_k][0], _box)
+
+                def dark_match(key):
+                    imgs, thr = self.templates[key]
+                    score, pos = dark_pending[key].result()
+                    res[key] = (score, thr, pos)
+                    return score >= thr
+
+                if dark_match("pause"):
+                    return "pause", res
+                # ※一部の楽曲選択画面はジャケット/KEEP OUTテープで暗くなり閾値(65)を下回る(mean≈61)
+                #   ため、暗め域(>50)では songselect(NEXT, 高specific 0.85)を確認して救済する。
                 # イベントトップの「本日の課題」ポップアップは mean≈58 で暗判定に落ちる。
                 # 放置すると打鍵エンジンが動き、円の位置にある「イベント楽曲へ」ボタンを
-                # 叩いて制御外の遷移を起こす（実測 2026-08-03）。songselect と同じ
-                # 間引き枠で確認するので、ライブ中の追加コストはほぼ無い
-                # （gameplay 40 フレーム中 mean>50 は 1 枚だけ）。
-                if bright > 50.0 and not rings:
-                    _imgs, _thr = self.templates["dailytask"]
-                    _sc, _pos = match_in_box(frame_bgr(), _imgs, DAILYTASK_SEARCH_BOX)
-                    res["dailytask"] = (_sc, _thr, _pos)
-                    if _sc >= _thr:
-                        return "dailytask", res
+                # 叩いて制御外の遷移を起こす（実測 2026-08-03）。
                 # EVENT RESULT の pt 画面はイベントテーマで暗くなる（実測 2026-09-10、
                 # KEEP OUT テーマで mean 57 < DARK_THRESH）。gameplay 扱いにすると円の位置を
                 # 盲目打鍵し続け、進むまで 40〜130 秒を浪費し、MIN_LIVE_SEC を超えて
                 # **偽クリアを二重計上**する。見出しは左上に固定なので範囲を絞って照合する。
+                # iOS のシステムダイアログ（iMessage/FaceTime 有効化確認）は画面を暗転させ
+                # mean≈64 < DARK_THRESH に落ちる（実測 2026-09-16 07:39、編成画面の上）。
+                # gameplay 扱いのままだと 240 秒で gameplay_timeout 停止 → runner 終了になる。
                 if bright > 50.0 and not rings:
-                    imgs, thr = self.templates["eventresult"]
-                    score, pos = match_in_box(frame_bgr(), imgs, EVENTRESULT_SEARCH_BOX)
-                    res["eventresult"] = (score, thr, pos)
-                    if score >= thr:
+                    if dark_match("songselect"):
+                        return "songselect", res
+                    if dark_match("dailytask"):
+                        return "dailytask", res
+                    if dark_match("eventresult"):
                         return "eventresult", res
+                    if dark_match("imessage"):
+                        return "imessage", res
+                    if dark_match("icloudsync"):
+                        return "icloudsync", res
             return "gameplay", res
         # --- 明るい画面（タイミング非依存。毎フレーム照合でよい）---
+        # 全キーの照合を判定順に常駐プールへ投げる。暗い側（ライブ中）では投げない
+        # （打鍵ループの CPU を奪わない）。
+        _bgr = frame_bgr()
+        _pool = match_pool()
+        for _k in BRIGHT_KEYS:
+            if _k in self.templates:
+                pending[_k] = _pool.submit(match_best, _bgr, self.templates[_k][0])
         if m("pause"):
             return "pause", res
+        # iOS の iMessage/FaceTime 確認は明るい画面の上にも出うる。battery と同じく最優先で閉じる。
+        if m("imessage"):
+            return "imessage", res
+        if m("icloudsync"):
+            return "icloudsync", res
         # --- 明るいメニュー画面（順序が重要） ---
         # iOSバッテリー残量低下警告は最優先で「閉じる」（放置すると未知画面で安全停止しループ停止）。
         if m("battery"):
@@ -1674,6 +2104,10 @@ class AutoLive:
         # 通信エラーもシアン系ヘッダを持つので cardx より先に確定する。
         if m("neterror"):
             return "neterror", res
+        # 「通信がタイムアウトしました。」も同じシアン系ヘッダ。ボタンは「諦める」1個だけ
+        # （リトライは無い）。cardx より先に確定する（2026-10-15 に cardx_stuck で停止した実績）。
+        if m("nettimeout"):
+            return "nettimeout", res
         # 「…サポートしました。」はシアン系ヘッダを持つうえ×が無い。cardx より先に確定する。
         if m("supported"):
             return "supported", res
@@ -1715,6 +2149,14 @@ class AutoLive:
         # 明るい側にも来る（帯の写り込みで揺れる領域）。カード型ポップアップなので cardx より先。
         if m("dailytask"):
             return "dailytask", res
+        # 「ライフを全回復しました。」モーダル。きなこ3個回復で LIFE が上限に達すると、
+        # 楽曲選択や Event Result の上に重なって出る（回復カードと違い**背景タップでは
+        # 閉じず、右上の × が必須**。2026-10-11 実機: cardx に流れて背景タップを約30回
+        # 踏んで cardx_stuck 停止。別の回では楽曲選択の上に出て NEXT を約30回飲み込んだ）。
+        # **songselect・cardx・closex より先**: 背後の NEXT や closex(0.88) が先に当たると
+        # モーダルが消えない画面として誤動作し続ける。
+        if m("lifefull"):
+            return "lifefull", res
         # 汎用カードポップアップ（報酬獲得/アイテム獲得/獲得一覧 等）の×を色検出で閉じる
         # （端末非依存）。専用ダイアログ判定の後・result の前（Result の上に重なって出るため）。
         # getattr: detect() は result_log 等の外部ツールからも __new__ 生成の
@@ -1730,15 +2172,23 @@ class AutoLive:
         _ss_score, _ss_pos = match_in_box(frame_bgr(), _ss_imgs, SONGSELECT_SEARCH_BOX)
         res["songselect"] = (_ss_score, _ss_thr, _ss_pos)
         if _ss_score >= _ss_thr:
+            stop_prefetch()
             return "songselect", res
         # per-song Result の EXP 画面はカードの緑ヘッダを持つため cardx と誤検出される。
         # 背景タップでは閉じず停滞→安全停止するので、色検出より先に確定させる。
         if m("expresult"):
             return "expresult", res
+        # フレンド（サポート）選択は上部の薄い水色の装飾帯（mean RGB≈[182,196,199]、
+        # y≈0.11〜0.17）が detect_card_x のシアン帯条件を満たし、cardx に誤判定されて
+        # 背景タップ連打→停滞停止していた（実測 2026-09-30、6クリアごとに4連続
+        # cardx_stuck。テンプレ側は 0.925 で当たる）。色検出より先に確定する。
+        if m("friendselect"):
+            return "friendselect", res
         cardx = None if time.time() < getattr(self, "suppress_cardx_until", 0.0) \
             else detect_card_x(frame_rgb)
         if cardx is not None:
             res["cardx"] = (1.0, 0, cardx)
+            stop_prefetch()
             return "cardx", res
         if m("closex"):
             return "closex", res
@@ -1747,11 +2197,305 @@ class AutoLive:
             return "eventresult", res
         if m("result"):
             return "result", res
-        if m("friendselect"):
-            return "friendselect", res
         if m("formation"):
             return "formation", res
         return "menu", res
+
+    # --- 曲間の遷移を詰めるための小道具（2026-10-11）---
+    def _grab(self):
+        return driver.grab(self.win)
+
+    def _still_frame(self, max_sec, gap=ADVANCE_STABLE_GAP):
+        """gap 秒空けた2枚がほぼ同じ（＝静止）になった後者を返す。
+        max_sec 以内に静止しなければ None。**クリックはしない。**
+        ゆっくり動くアニメ（一覧のスライドイン等）を静止と取り違えないよう、gap は長めにもできる。"""
+        end = time.time() + max_sec
+        prev = self._grab()
+        while True:
+            time.sleep(gap)
+            cur = self._grab()
+            if frame_diff(prev, cur) < ADVANCE_STABLE_DIFF:
+                return cur
+            if time.time() >= end:
+                return None
+            prev = cur
+
+    def _wait_change(self, ref, max_sec):
+        """画面が ref から ADVANCE_SAME_DIFF 以上変わるまで待つ（最大 max_sec）。変わったら True。
+
+        固定の sleep の代わりに使う。押した直後に同じボタンをもう一度押さないための待ちは
+        「画面が変わるまで」で十分で、変わったらすぐ次の判定へ進める。"""
+        end = time.time() + max_sec
+        while time.time() < end:
+            time.sleep(0.1)
+            if frame_diff(ref, self._grab()) >= ADVANCE_SAME_DIFF:
+                return True
+        return False
+
+    def _scores(self, frame_rgb, keys):
+        """keys の照合を match_pool() で並列に行い {key: (score, thr, pos)} を返す。"""
+        bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+        pool = match_pool()
+        futs = {k: pool.submit(match_best, bgr, self.templates[k][0])
+                for k in keys if k in self.templates}
+        out = {}
+        for k, fut in futs.items():
+            score, pos = fut.result()
+            out[k] = (score, self.templates[k][1], pos)
+        return out
+
+    def _advance_tap(self, state):
+        """送り画面のタップ。既定は右側の背景 P_CARD_DISMISS（窓相対 (0.86, 0.50)）。
+        Result 系で右側が効かないと判った画面だけ、従来の中央送り（OFF_RESULT_ADV）に戻す。"""
+        if self.advance_alt.get(state):
+            self.click_center_off(OFF_RESULT_ADV)
+        else:
+            self.click_window(*P_CARD_DISMISS)
+
+    def _advance_screen_ok(self, state, ref, cur):
+        """連続タップの1打ごとのガード。cur がまだ「state と同じ送り画面」なら True。
+
+        detect() の判定順を写す: 重なるダイアログ（ADVANCE_GUARD_KEYS・楽曲選択）が見えたら止める。
+        cardx は色検出でダイアログにも当たる（LIFE不足・連続ライブで実測）ので、detect() が
+        識別したときの画面 ref とほぼ同じ見た目のときだけ叩く。Result 系はページが進むので
+        ref との一致は求めず、テンプレで送り画面であることを毎回確かめる。
+        """
+        if state == "cardx" and frame_diff(ref, cur) >= ADVANCE_SAME_DIFF:
+            return False
+        keys = ADVANCE_GUARD_KEYS + (() if state == "cardx"
+                                     else ("expresult", "closex", "eventresult", "result"))
+        sc = self._scores(cur, keys)
+        if any(sc[k][0] >= sc[k][1] for k in ADVANCE_GUARD_KEYS if k in sc):
+            return False
+        ss_imgs, ss_thr = self.templates["songselect"]
+        if match_in_box(cv2.cvtColor(cur, cv2.COLOR_RGB2BGR), ss_imgs,
+                        SONGSELECT_SEARCH_BOX)[0] >= ss_thr:
+            return False
+        card = detect_card_x(cur)
+        if state == "cardx":
+            return card is not None
+
+        def hit(k):
+            return k in sc and sc[k][0] >= sc[k][1]
+        if hit("expresult"):
+            return True
+        if card is not None or hit("closex"):   # 判定順で result より前（カードが重なった）
+            return False
+        return hit("eventresult") or hit("result")
+
+    def _advance_burst(self, state, ref):
+        """送り画面（result/eventresult/expresult/cardx）を短い間隔で続けて送る。叩いた回数を返す。
+
+        1打ごとに「静止している」「まだ同じ送り画面」（_advance_screen_ok）を確かめてから叩く。
+        画面が動いている（遷移・ダイアログの出現アニメ）間は叩かず、別の画面になったら
+        すぐやめて通常の detect() に戻す。LIFE不足・連続ライブのダイアログへは打ち込まない。
+        """
+        taps = 0
+        end = time.time() + ADVANCE_BURST_SEC
+        while taps < ADVANCE_BURST_TAPS and time.time() < end:
+            time.sleep(ADVANCE_BURST_GAP)
+            cur = self._still_frame(0.6)
+            if cur is None or not self._advance_screen_ok(state, ref, cur):
+                return taps
+            self._advance_tap(state)
+            taps += 1
+        return taps
+
+    def _advance_fallback_check(self, state, now):
+        """Result 系（result/eventresult/expresult）の同じ状態に ADVANCE_ALT_SEC 以上留まったら、
+        右側タップが効かない画面とみなし、以後その状態だけ従来の中央送り（OFF_RESULT_ADV）に戻す。
+        cardx は背景タップで閉じることを実機で確認済みなので対象外。"""
+        if self.advance_alt.get(state):
+            return
+        since = self.advance_since
+        if since is None or since[0] != state:
+            self.advance_since = (state, now)
+            return
+        if now - since[1] > ADVANCE_ALT_SEC:
+            self.advance_alt[state] = True
+            self.log(f"[warn] {state}: 右側タップで {now - since[1]:.0f}s 進まない"
+                     f" → 以後は中央タップで送る")
+
+    def _recover_life(self, frame):
+        """LIFE 不足ダイアログで、きなこパンを KINAKO_PER_RECOVER(3) 個使って回復する。
+
+        戻り値 (status, kinako_score, frame):
+          "recovered"      … きなこ行の「回復」を押した
+          "gone"           … ダイアログが消えた（「回復」は押していない）
+          "unsettled"      … 押せるフレームが取れず「回復」を押さなかった（次の detect でやり直す）
+          "kinako_missing" … KINAKO_RECHECK_SEC 撮り直してもきなこ行が一度も見えない（**何も押していない**）
+
+        押す点はすべて**きなこ行のテンプレ一致位置から**求める（ステラ行は 0.26h 下・ステッパー無し）。
+        - 「回復」: kinako_recover_point（行と同じ高さのピンクのボタン）
+        - 「+」  : kinako_plus_point（「回復」と同じ高さ・その左の青い箱の中の白い十字）
+        - 「−」  : kinako_minus_point（同じステッパーの左端の白い横棒）
+
+        手順（ユーザー指定 2026-10-11）:
+        1. 行が閾値を超えて見え、**行の位置が2枚続けて同じ**フレームを待つ。ダイアログには
+           キラキラ演出が約 0.5 秒ごとにきなこ行を横切り、その間スコアは 0.72〜0.80 に落ちる
+           （閾値 0.80、平常 0.83）。全画面の静止判定は「+」自身のタップ演出でも崩れるので使わない。
+        2. **「+」はダイアログ1回の出現につきちょうど2回**（1 → 3）。数量欄が「1」と
+           確定したときだけ押し、押した事実を self.kinako_plus_at に残して、同じダイアログでは
+           二度と押さない。
+        3. **数量欄は同じ読みが続くまで確定しない。** 「1」「3」は連続 KINAKO_SETTLE_READS(2) 回、
+           それ以外は KINAKO_OTHER_READS(3) 回。これにより「+」の後のカウントアップ（1→2→3）の
+           途中に一瞬だけ見える「2」を「3より多い」と誤認して「−」を押すことはない。
+        4. 赤い「上限を超えています」バッジが出ている間は「−」を押すだけ（「回復」は押さない）。
+           バッジ無しで数量が確定して「3」でも「1」でもなければ「−」で戻す。
+        5. 数量欄が「3」と確定したら「回復」。「+」が見つからない（数量欄が「1」のまま）なら
+           1個で回復。確定した「1」で「+」済みなら押し直さず待つ（時間切れで unsettled）。
+        """
+        ls_imgs, ls_thr = self.templates["lifeshort"]
+        k_imgs, k_thr = self.templates["kinakorow"]
+
+        def look(fr):
+            bgr = cv2.cvtColor(fr, cv2.COLOR_RGB2BGR)
+            f_ls = match_pool().submit(match_best, bgr, ls_imgs)
+            ks, kp = match_best(bgr, k_imgs)
+            return f_ls.result()[0] >= ls_thr, ks, kp
+
+        now = time.time()
+        plus_at = getattr(self, "kinako_plus_at", None)
+        plussed = plus_at is not None and now - plus_at[0] < KINAKO_PLUS_MEMORY_SEC
+        # このダイアログで「+」を押した事実（呼出をまたいで保持）。直後の数量「?」読みで
+        # 「−」を踏むと打ち消してしまうので、settled_ot の minus 発火を抑える判定に使う。
+        plus_clicked = plussed and getattr(self, "_kinako_plus_clicked", False)
+        if not plussed:
+            self.kinako_plus_at = None
+            self._kinako_plus_clicked = False
+        deadline = now + KINAKO_RECHECK_SEC   # 「行の発見」予算。見えたら settle 予算へ伸びる
+        hard_deadline = now + KINAKO_RECOVER_MAX_SEC  # ok が間欠し続けてもここで打ち切る
+        cur = frame
+        on = True
+        ks, kp = match_best(self.bgr(frame), k_imgs)
+        best_ks, prev_kp = ks, None
+        seen_row = False
+        minus_taps = 0
+        qty = None
+        qty_seq = []      # 数量欄の読み（"3"/"1"/"?"）の連続列。確定に使う
+        just_clicked = False  # 「+」「−」を押した直後（再び2枚揃うのを待つ）
+        while True:
+            if not on:
+                self.kinako_plus_at = None
+                self._kinako_plus_clicked = False
+                return "gone", best_ks, cur
+            ok = kp is not None and ks >= k_thr
+            steady = ok and prev_kp is not None and abs(kp[0] - prev_kp[0]) <= 2 \
+                and abs(kp[1] - prev_kp[1]) <= 2
+            if ok:
+                seen_row = True
+                # 行が見えている間は「確定 → + → 再確定 → 回復」の予算を使う。
+                # 発見予算(2s)では1反復~0.9sの実機で数量確定に届かず unsettled 空転した
+                # （2026-10-14）。上限は hard_deadline が保証する。
+                deadline = max(deadline, time.time() + KINAKO_SETTLE_SEC)
+            if steady:
+                rec = kinako_recover_point(cur, kp)
+                plus = kinako_plus_point(cur, rec)
+                over = kinako_over_cap(cur, rec)
+                # 数量欄の位置は「+」から決まる。「+」が演出に隠れたフレームでは、行（=「回復」）から
+                # 求めた既定の相対位置（実測: 「回復」中心の 0.089w 左）を使う。
+                ref = plus if plus is not None else (rec[0] - 0.089 * cur.shape[1], rec[1])
+                three = kinako_qty_is_three(cur, ref)
+                one = kinako_qty_is_one(cur, ref)
+                # 同じ読みが続くまで確定しない（カウントアップ途中の「2」で「−」を押さない）。
+                # バッジだけは即座に扱う（読み取りを待つ必要がない）。
+                cls = "3" if three else ("1" if one else "?")
+                if not qty_seq or qty_seq[-1] != cls:
+                    qty_seq = [cls]
+                else:
+                    qty_seq.append(cls)
+                settled13 = len(qty_seq) >= KINAKO_SETTLE_READS and cls != "?"
+                settled_ot = len(qty_seq) >= KINAKO_OTHER_READS and cls == "?"
+                if over:
+                    # **赤いバッジが出ている間は「回復」を押さない**（上の分岐に来ない）。
+                    # 数量に関係なく「−」で戻す。
+                    minus = kinako_minus_point(cur, ref)
+                    if minus is not None and minus_taps < KINAKO_MINUS_MAX:
+                        self.click_match(minus)
+                        minus_taps += 1
+                        self.kinako_plus_at = (time.time(), kp, plus or ref)
+                        plussed = True     # 数量は既に 1 より多い。「+」は押さない
+                        deadline = max(deadline, time.time() + KINAKO_POST_CLICK_SEC)
+                        time.sleep(KINAKO_STEP_GAP)
+                        qty_seq = []
+                        just_clicked = True   # 押した後は撮り直して2枚揃うのを待つ
+                elif settled13 and cls == "3":
+                    qty = f"{KINAKO_PER_RECOVER}個（数量欄 3 を確認）"
+                    break
+                elif settled13 and cls == "1":
+                    if plus is not None and not plussed and KINAKO_PER_RECOVER > 1:
+                        # 開いた直後の数量 1 → 「+」をちょうど2回で 3。この出現ではもう押さない。
+                        for _ in range(KINAKO_PER_RECOVER - 1):
+                            self.click_match(plus)
+                            time.sleep(KINAKO_STEP_GAP)
+                        self.kinako_plus_at = (time.time(), kp, plus)
+                        self._kinako_plus_clicked = True
+                        plus_clicked = True
+                        plussed = True
+                        deadline = max(deadline, time.time() + KINAKO_POST_CLICK_SEC)
+                        qty_seq = []
+                        just_clicked = True
+                    elif plus is None and not plussed:
+                        qty = "1個（「+」が見つからない）"
+                        break
+                    # plussed なのに 1 のまま: 「+」の反映待ち。押し直さずに待つ（時間切れで unsettled）。
+                elif settled_ot and minus_taps < KINAKO_MINUS_MAX and not plus_clicked:
+                    # 数量が確定して 1 でも 3 でもない（前回の積み増しが残っている等）→「−」で戻す。
+                    # **「+」済みなら「−」は打たない**: カウントアップ途中や未知字形の「?」を
+                    # 数量超過と取り違えて打ち消すのを防ぐ（2026-10-14 実機: 「+」x2 直後に
+                    # 「−」が踏まれ数量が戻った）。
+                    minus = kinako_minus_point(cur, ref)
+                    if minus is not None:
+                        self.click_match(minus)
+                        minus_taps += 1
+                        self.kinako_plus_at = (time.time(), kp, plus or ref)
+                        plussed = True     # 数量は既に 1 より多い。「+」は押さない
+                        deadline = max(deadline, time.time() + KINAKO_POST_CLICK_SEC)
+                        time.sleep(KINAKO_STEP_GAP)
+                        qty_seq = []
+                        just_clicked = True   # 押した後は撮り直して2枚揃うのを待つ
+            if time.time() >= deadline or time.time() >= hard_deadline:
+                if seen_row:
+                    self.log(f"[dbg] kinako未確定: 読み={qty_seq[-6:]} "
+                             f"plus_clicked={plus_clicked} minus={minus_taps}")
+                return ("unsettled" if seen_row else "kinako_missing"), best_ks, cur
+            time.sleep(ADVANCE_STABLE_GAP if seen_row else KINAKO_RECHECK_GAP)
+            prev_kp = None if just_clicked else (kp if ok else None)
+            just_clicked = False
+            cur = self._grab()
+            on, ks, kp = look(cur)
+            best_ks = max(best_ks, ks)
+        if minus_taps:
+            qty += f"・「−」{minus_taps}回で戻した"
+        self.log(f"LIFE不足 → きなこパンで回復（{self.life_recovers}回目, ステラ不使用・"
+                 f"行確認 score={ks:.2f}, {qty}）")
+        try:
+            from PIL import Image as _I
+            _I.fromarray(cur).save(os.path.join(self.dbg_dir, "kinako_before_recover.png"))
+        except Exception:
+            pass
+        self.click_match(rec)  # きなこパン行の「回復」
+        self.kinako_plus_at = None
+        self._kinako_plus_clicked = False
+        # ダイアログが消えて確認カード（「ライフをN回復しました」）に替わってから閉じる。
+        # ダイアログが残ったまま押すと、確認の×の位置はダイアログ右端の×に近い。
+        end = time.time() + LIFE_CONFIRM_WAIT_SEC
+        lf_imgs, lf_thr = self.templates["lifefull"]
+        while time.time() < end:
+            time.sleep(0.15)
+            card = self._still_frame(0.5)
+            if card is None or look(card)[0]:
+                continue   # 動いている／LIFE不足ダイアログがまだ出ている
+            cbgr = cv2.cvtColor(card, cv2.COLOR_RGB2BGR)
+            lsc, lpos = match_best(cbgr, lf_imgs)
+            if lsc >= lf_thr:
+                # 「ライフを全回復しました。」は背景タップでは閉じない。右上の × を押す。
+                self.click_anchor(lpos, ANCH_LIFEFULL_X)
+                break
+            if life_card_like(card):
+                self.click_window(*P_CARD_DISMISS)  # 確認カードは背景タップで閉じる
+                break
+        return "recovered", ks, cur
 
     def run(self):
         self.log(f"自動周回を開始（前面化, tap-mode={self.tap_mode}）。停止: ESCキー")
@@ -1836,6 +2580,20 @@ class AutoLive:
                          f"content={self.content}")
 
             if state == "pause":
+                now = time.time()
+                if self.pause_since is None:
+                    self.pause_since = now
+                elif now - self.pause_since > PAUSE_STUCK_SEC:
+                    # 「再開」を押し続けても PAUSE が消えない＝合成クリックが効いていない
+                    # （再接続病）か PAUSE の上に別ダイアログ。スクショ保存して停止（要・繋ぎ直し）。
+                    from PIL import Image as _I
+                    fn = os.path.join(self.dbg_dir,
+                                      f"pause_stuck_{int(now - self.t_start)}.png")
+                    _I.fromarray(frame).save(fn)
+                    self.log(f"[warn] PAUSE が {now - self.pause_since:.0f}s 続き「再開」が効かない"
+                             f"（再接続病の可能性）→ {fn} 保存して停止")
+                    self.stop_reason = "pause_stuck"
+                    break
                 # 注意: pause_resume.png は「PAUSE」見出し文字に一致する。マッチ位置を
                 # クリックすると見出しを叩くだけで再開しない（旧バグ）。PAUSEメニューの
                 # 「再開」ボタンは右下の固定位置 P_RESUME にあるためそこをクリックする。
@@ -1848,6 +2606,18 @@ class AutoLive:
                          + ("  <<< 最前面を奪われている（原因C）" if lost else ""))
                 self.click_anchor(res["pause"][2], ANCH_RESUME)
                 time.sleep(0.4)
+            elif state == "imessage":
+                # iOS「iMessage と FaceTime をオンにしますか？」→ **使用しない** のみ押す。
+                # 「オンにする」は SMS 送信で課金され得る旨がダイアログに明記されている。
+                self.log("iOS iMessage/FaceTime 確認 → 使用しない")
+                self.click_anchor(res["imessage"][2], ANCH_IMESSAGE_NO)
+                time.sleep(0.8)
+            elif state == "icloudsync":
+                # iOS「一部の iCloud データは同期していません」→ **今はしない** のみ押す。
+                # 「データの同期を再開」は端末の iCloud 設定を変えるので押さない。
+                self.log("iOS iCloud 同期確認 → 今はしない")
+                self.click_anchor(res["icloudsync"][2], ANCH_ICLOUD_NO)
+                time.sleep(0.8)
             elif state == "battery":
                 # iOSバッテリー残量低下警告 → 「閉じる」のみ押す（低電力モードは絶対に押さない）。
                 self.log("バッテリー警告 → 閉じる（充電推奨）")
@@ -1855,7 +2625,8 @@ class AutoLive:
                 time.sleep(0.6)
             elif state == "lifeshort":
                 # LIFE不足ダイアログ。**きなこパンで回復し、ステラは絶対に使わない**。
-                # きなこパン1個(+20) → 確認ポップアップ → ×で閉じる、を1手順で行う。
+                # きなこパン KINAKO_PER_RECOVER 個（きなこ行の「+」）→ 回復 → 確認カードを閉じる、
+                # を1手順で行う（_recover_life）。
                 self.life_recovers += 1
                 if self.life_recovers > MAX_LIFE_RECOVERS:
                     fn = os.path.join(self.dbg_dir,
@@ -1868,23 +2639,39 @@ class AutoLive:
                     break
                 # **押す前に「きなこパン行が実在すること」を画像で確認する。**
                 # 枯渇時は行が消えて詰まり、旧実装は同じオフセットでステラの「回復」を
-                # 押していた（実機で既遂）。見つからなければ**クリックせず停止**する。
-                kscore, kpos = match_best(self.bgr(frame), self.templates["kinakorow"][0])
-                if kpos is None or kscore < TEMPLATES["kinakorow"][1]:
+                # 押していた（実機で既遂）。KINAKO_RECHECK_SEC 撮り直しても見つからなければ
+                # **クリックせず停止**する（撮り直しの間も一切押さない）。
+                status, kscore, kframe = self._recover_life(frame)
+                if status == "kinako_missing":
                     fn = os.path.join(self.dbg_dir,
                                       f"kinako_missing_{int(time.time()-self.t_start)}.png")
                     from PIL import Image as _I
-                    _I.fromarray(frame).save(fn)
-                    self.log(f"[warn] きなこパン行が見つからない（score={kscore:.2f}）→ "
-                             f"{fn} 保存。**ステラ誤消費を避けるためクリックせず停止**します。")
+                    _I.fromarray(kframe).save(fn)
+                    self.log(f"[warn] きなこパン行が見つからない（{KINAKO_RECHECK_SEC:.0f}秒撮り直し, "
+                             f"score={kscore:.2f}）→ {fn} 保存。"
+                             f"**ステラ誤消費を避けるためクリックせず停止**します。")
                     self.stop_reason = "kinako_missing"
                     break
-                self.log(f"LIFE不足 → きなこパンで回復（{self.life_recovers}回目, "
-                         f"ステラ不使用・行確認 score={kscore:.2f}）")
-                self.click_match(kinako_recover_point(frame, kpos))  # きなこパン行の「回復」
-                time.sleep(1.3)
-                self.click_center_off(OFF_LIFE_CONFIRM)  # 「N回復しました」確認の×（直後に出るためテンプレ無し→中央アンカー）
-                time.sleep(1.3)
+                if status == "recovered":
+                    self.life_unsettled = 0
+                else:
+                    # 「回復」を押していない（ダイアログが消えた／行を確かめ切れなかった）。
+                    # **きなこ枯渇の判定（MAX_LIFE_RECOVERS）には数えない。**
+                    self.life_recovers -= 1
+                if status == "unsettled":
+                    # 何もクリックしていないか、「+」だけ押した（「+」は1ダイアログ1回まで）。
+                    self.life_unsettled = getattr(self, "life_unsettled", 0) + 1
+                    self.log(f"LIFE不足 → きなこ行を確かめ切れず回復を押さずに再判定"
+                             f"（{self.life_unsettled}/{MAX_LIFE_UNSETTLED}, score={kscore:.2f}）")
+                    if self.life_unsettled >= MAX_LIFE_UNSETTLED:
+                        fn = os.path.join(self.dbg_dir,
+                                          f"kinako_unsettled_{int(time.time()-self.t_start)}.png")
+                        from PIL import Image as _I
+                        _I.fromarray(kframe).save(fn)
+                        self.log(f"[warn] きなこ行を {MAX_LIFE_UNSETTLED} 回続けて確かめ切れない → "
+                                 f"{fn} 保存。**ステラ誤消費を避けるためクリックせず停止**します。")
+                        self.stop_reason = "kinako_unsettled"
+                        break
             elif state == "gameplay":
                 self.life_recovers = 0  # ライブに入れた＝LIFEは足りた
                 now = time.time()
@@ -1936,9 +2723,25 @@ class AutoLive:
                     self.was_in_live = False
                     self.starts_since_clear = 0
                     self.log(f"★ライブ クリア（通算 {self.loops_done}）")
+                # 実際には連続ライブ「同じライブを同じ条件で再プレイしますか？」の**はい**
+                # （friendreq_yes がピンクの「はい」に 0.86 で当たる。2026-10-11 実測）。
+                # はいの直後に出る LIFE 不足ダイアログでは、この位置の **6px 上がステラ行の
+                # 「回復」**（386..441, 225..246 @671x348）。detect() の数百 ms 前のフレームで
+                # 押すと、ダイアログが切り替わった瞬間に着弾しうるので、**押す直前に静止した
+                # 新しいフレームで「はい」がまだ同じ位置にあり、LIFE 不足ではないこと**を確かめる。
+                fresh = self._still_frame(0.6)
+                sc = self._scores(fresh, ("lifeshort", "friendreq")) if fresh is not None else None
+                pos0 = res["friendreq"][2]
+                if sc is None or sc["lifeshort"][0] >= sc["lifeshort"][1] \
+                        or sc["friendreq"][0] < sc["friendreq"][1] \
+                        or abs(sc["friendreq"][2][0] - pos0[0]) > 3 \
+                        or abs(sc["friendreq"][2][1] - pos0[1]) > 3:
+                    continue   # 画面が動いた・変わった。押さずに再判定する
                 self.log("フレンド申請 → 申請する")
-                self.click_match(res["friendreq"][2])
-                time.sleep(0.5)   # ライブ間を詰める（ユーザー要件: 最速で次のライブへ）
+                self.click_match(sc["friendreq"][2])
+                # 二度押し防止の待ちは「画面が変わるまで」（最大 1.5 秒）。旧: 固定 0.5 秒＋次の
+                # detect で、はいを 1.4 秒おきに2回押していた（1回目はダイアログの出現アニメ中）。
+                self._wait_change(fresh, 1.5)
             elif state == "replay":
                 # 連続ライブ再プレイ確認 → 「はい」で同じ曲を再開（次のループへ）。
                 if self.was_in_live:
@@ -1949,6 +2752,26 @@ class AutoLive:
                 self.log("連続ライブ 再プレイ → はい")
                 self.click_anchor(res["replay"][2], ANCH_REPLAY_YES)  # マッチ位置+オフセット（画像追従）
                 time.sleep(0.9)   # 再プレイ「はい」→ライブ開始まで。詰めすぎると二度押し
+            elif state == "lifefull":
+                # 「ライフを全回復しました。」モーダル。**背景タップでは閉じない**（実機:
+                # cardx に流れて P_CARD_DISMISS を約30回踏んでも残った）。カード右上の × を
+                # 本文テンプレのマッチ位置からのオフセットで押す。閉じられず留まる場合は
+                # watchdog で停止。
+                now = time.time()
+                if self.menu_since is None:
+                    self.menu_since = now
+                if now - self.menu_since > STUCK_STOP_SEC:
+                    from PIL import Image as _I
+                    fn = os.path.join(self.dbg_dir,
+                                      f"lifefull_stuck_{int(now - self.t_start)}.png")
+                    _I.fromarray(frame).save(fn)
+                    self.log(f"[warn] 全回復モーダルを閉じられず停滞 → {fn} 保存して停止")
+                    self.stop_reason = "lifefull_stuck"
+                    break
+                self.log("全回復モーダル → × で閉じる")
+                self.click_anchor(res["lifefull"][2], ANCH_LIFEFULL_X)
+                # 二度押し防止の待ちは「画面が変わるまで」（最大 1.5 秒）。
+                self._wait_change(frame, 1.5)
             elif state == "cardx":
                 # 汎用カードポップアップ（報酬獲得/アイテム獲得/RANK UP 等）。**×でなく背景の
                 # どこをタップしても閉じる**ため、色検出した×位置（背景汚染でばらつく）ではなく
@@ -1967,7 +2790,12 @@ class AutoLive:
                     break
                 self.log("カードポップアップ → 背景タップで閉じる")
                 self.click_window(*P_CARD_DISMISS)
-                time.sleep(0.35)  # ポップアップは連続で出るので1枚あたりを詰める
+                # 「ライフをN回復しました」や Event Result の pt ページは続けて出るので、同じ画面の
+                # ままである間だけ短い間隔で叩き続ける（_advance_burst。LIFE不足・連続ライブの
+                # ダイアログに替わったら止まる）。
+                n = self._advance_burst("cardx", frame)
+                if n:
+                    self.log(f"カードポップアップ → 続けて背景タップ {n} 回")
             elif state == "closex":
                 # カード型ポップアップ（獲得一覧 / 報酬獲得 / 申請完了 / 本日の課題 等）の×。
                 # 閉じられず同じ画面に留まる場合は watchdog で停止（誤クリック無限ループ防止）。
@@ -2042,22 +2870,49 @@ class AutoLive:
                     self.click_window(*P_EASY_TAB)   # EASY タブを選択（難易度）
                     time.sleep(0.5)
                 self.click_match(res["songselect"][2])
-                time.sleep(1.4)
+                # 二度押し防止の待ちは「画面が変わるまで」（最大 1.4 秒＝旧の固定値）。
+                if not self._wait_change(frame, 1.4):
+                    # 変わらなかった = 見えない蓋（「ライフを全回復しました。」等の
+                    # モーダル）に NEXT が飲まれている可能性。2026-10-11 実機では
+                    # この状態で NEXT を約30回・60秒空打ちした（当時は滞留の監視が
+                    # 無く watchdog も効かなかった）。蓋そのものは lifefull 等の
+                    # 専用判定で処理する。ここでは空打ちの回数だけ数え、限度を超えたら
+                    # フレームを保存して停止する（蓋が判定不能な新種であるため）。
+                    self.songsel_nochg += 1
+                    if self.songsel_nochg >= SONGSELECT_NOCHANGE_MAX:
+                        from PIL import Image as _I
+                        fn = os.path.join(
+                            self.dbg_dir,
+                            f"songselect_stuck_{int(time.time() - self.t_start)}.png")
+                        _I.fromarray(frame).save(fn)
+                        self.log(f"[warn] NEXT を {self.songsel_nochg} 回押しても"
+                                 f"楽曲選択から進まない → {fn} 保存して停止"
+                                 f"（見えないモーダル等の蓋の可能性）")
+                        self.stop_reason = "songselect_stuck"
+                        break
+                else:
+                    self.songsel_nochg = 0
             elif state == "friendselect":
                 # フレンド（サポート）選択 → **必ず一番上の行**（ユーザー要件）。
                 # アピールスキル ラベルは全行に出るため、最良スコアではなく最上段を選ぶ。
-                score, pos = match_topmost(self.bgr(frame),
+                # **一覧が静止してから押す。** 遷移アニメ中の1回目のタップは無視され、旧実装は
+                # 次の detect（約 2〜4 秒後）で押し直していた（2026-10-11 実測: 4.0 秒差の2回押し）。
+                fresh = self._still_frame(1.5, gap=0.25)
+                if fresh is None:
+                    continue   # 動き続けている。押さずに再判定する
+                score, pos = match_topmost(cv2.cvtColor(fresh, cv2.COLOR_RGB2BGR),
                                            self.templates["friendselect"][0],
                                            TEMPLATES["friendselect"][1])
                 if pos is None:
-                    pos = res["friendselect"][2]
+                    continue   # 静止した画面にフレンド行が無い（別画面へ移った）。再判定する
                 self.log("フレンド選択 → 最上段を選択")
                 self.click_match(pos)
                 # 直後は編成画面への遷移アニメ中。イベント装飾の帯を cardx と誤検出して
                 # 右上の × を押してしまうため、この間は cardx を無視して START を待つ
                 # （ユーザー要件: フレンド選択後は余計なタップをせず即 START）。
                 self.suppress_cardx_until = time.time() + CARDX_SUPPRESS_SEC
-                time.sleep(1.0)
+                # 二度押し防止の待ちは「画面が変わるまで」（最大 1.0 秒＝旧の固定値）。
+                self._wait_change(fresh, 1.0)
             elif state == "formation":
                 # 編成画面 → START（STARTテンプレのマッチ位置を直接クリック・端末非依存）。
                 # **クリア無しで START が続いたら、押さずに停止する**（MAX_STARTS_WITHOUT_CLEAR）。
@@ -2201,6 +3056,13 @@ class AutoLive:
                 self.log(f"通信エラー → リトライ（{self.net_retries}/{MAX_NET_RETRIES}）")
                 self.click_anchor(res["neterror"][2], ANCH_NETERROR_RETRY)
                 time.sleep(3.0)
+            elif state == "nettimeout":
+                # 「通信がタイムアウトしました。」→ 唯一のボタン「諦める」を押して閉じる。
+                # リトライはないので neterror のリトライ上限とは別系（繰り返し出る場合は
+                # menu watchdog / safe-stop が止める）。
+                self.log("通信タイムアウト → 諦めるで閉じる")
+                self.click_anchor(res["nettimeout"][2], ANCH_NETTIMEOUT_GIVEUP)
+                time.sleep(2.0)
             elif state == "supported":
                 # 「ライブをN回サポートしました。」→ はい。×が無いので背景タップでは閉じない。
                 self.log("フレンドサポート通知 → はい")
@@ -2219,7 +3081,7 @@ class AutoLive:
                 self.click_anchor(res["liveassist"][2], ANCH_LIVEASSIST_START)
                 time.sleep(1.2)
             elif state in ("result", "eventresult", "expresult"):
-                # per-song Result / EVENT RESULT。クリア計上し、中央タップで送る。
+                # per-song Result / EVENT RESULT。クリア計上し、右側の背景タップで送る。
                 now = time.time()
                 if self.was_in_live:
                     self.loops_done += 1
@@ -2253,8 +3115,22 @@ class AutoLive:
                              f"{fn} 保存して停止（システムダイアログ等のオーバーレイの可能性）。")
                     self.stop_reason = "result_stuck"
                     break
-                self.click_center_off(OFF_RESULT_ADV)  # 画面中央タップで送る
-                time.sleep(0.35)  # リザルト送りの中央タップ間隔
+                # 送りタップは右側の背景 P_CARD_DISMISS（カードポップアップと同じ審査済みの点）。
+                # 同じ状態に ADVANCE_ALT_SEC 留まったら、その状態だけ従来の中央送りへ戻す。
+                self._advance_fallback_check(state, now)
+                self._advance_tap(state)
+                # 送り画面のままである間は短い間隔で叩き続ける（1回の detect が 1〜3 秒かかるため、
+                # 「detect → 1タップ」では送りの実効間隔がその秒数になっていた）。
+                n = self._advance_burst(state, frame)
+                if n:
+                    self.log(f"{state} → 続けて送りタップ {n} 回")
+            elif int(self.win["w"]) < int(self.win["h"]):
+                # ミラーリング切断ダイアログ（縦長。ゲーム画面は常に横向き）。
+                # ゲーム内の未知画面ではないので止めずに待機する。再確認は
+                # _refresh_window(2s) が担い、接続が戻れば同じ autolive が続く。
+                # 回復が長引くときは runner/supervisor 側が安全停止→再開を請け負う。
+                self.menu_since = None
+                time.sleep(1.0)
             else:  # menu: 未知の明るい画面（ローディング/遷移/未知ダイアログ）
                 # **未知画面ではクリックしない**（誤爆して別画面へ迷い込む＝連鎖暴走やステラ
                 # 誤使用を防ぐ）。短い遷移は待てば次状態へ解決する。一定時間抜けられなければ
@@ -2273,20 +3149,33 @@ class AutoLive:
                 time.sleep(0.3)
             if state != "home":
                 self.home_taps = 0
+            if state != "songselect":
+                self.songsel_nochg = 0
             # 進捗のある状態に遷移したら停滞タイマーをリセット。menu/rankup/closex は
             # 同画面ループの可能性があるのでタイマーを維持し watchdog 対象とする。
-            if state not in ("menu", "rankup", "closex", "cardx", "loginbonus", "speciallogin"):
+            if state not in ("menu", "rankup", "closex", "cardx", "lifefull",
+                             "loginbonus", "speciallogin"):
                 self.menu_since = None
             # result/eventresult を抜けたら（=進捗）Result停滞タイマーをリセット。
             self._prof["act"] += time.time() - _t
             if state not in ("result", "eventresult"):
                 self.result_since = None
-            # gameplay タイマーは gameplay/pause（=ライブ中）以外でリセット。
-            # 併せて timing 検出のベースラインも次ライブ用にリセットする。
-            if state not in ("gameplay", "pause"):
+            if state not in ("result", "eventresult", "expresult"):
+                self.advance_since = None
+            if state in ("gameplay", "pause"):
+                self._gp_left_ts = time.time()
+            elif time.time() - self._gp_left_ts > GAMEPLAY_GAP_SEC:
+                # gameplay から外れて GAMEPLAY_GAP_SEC 以上経過＝ライブが本当に終わった。
+                # 数秒の明るい演出（menu 誤判定）やリザルト間の暗い遷移では**リセットしない**
+                # （演出ごとにリセットされると was_in_live が立たず、クリアが計上されない。
+                # 実機でクリア0・警告0のまま live_abandoned まで到達した。2026-10-11）。
+                # 併せて timing 検出のベースラインも次ライブ用にリセットする。
                 self.gameplay_since = None
                 if any(b is not None for b in self.note_baseline):
                     self.note_baseline = [None] * len(CIRCLES)
+                    self.note_rearmed = [True] * len(CIRCLES)
+            if state != "pause":
+                self.pause_since = None
 
 
 def calibrate(seconds=15.0):

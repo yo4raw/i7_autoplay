@@ -120,6 +120,29 @@ class TestRunUntilBranches(unittest.TestCase):
         self.assertNotIn("NG", r.stdout, r.stdout)
 
 
+
+class TestSongselectNoChangeGuard(unittest.TestCase):
+    """NEXT を押しても画面が変わらない連鎖を回数で止める（実装の存在確認）。
+
+    2026-10-11 実機: 「ライフを全回復しました。」モーダルが楽曲選択の上に出て、
+    NEXT を約30回・60秒空打ちした（当時は滞留の監視が無かった）。
+    今はモーダルは lifefull で検出し、それでも残る未知の蓋は
+    SONGSELECT_NOCHANGE_MAX 回の空打ちで songselect_stuck で停止する。
+    """
+
+    def test_guard_exists_and_stops(self):
+        src = open(AUTOLIVE, encoding="utf-8").read()
+        self.assertIn("SONGSELECT_NOCHANGE_MAX", src)
+        self.assertIn("songsel_nochg += 1", src)
+        self.assertIn('"songselect_stuck"', src)
+        # 回数の判定が _wait_change の結果（画面が変わらなかった）に基づくこと
+        self.assertIn("if not self._wait_change(frame, 1.4):", src)
+
+    def test_songselect_is_in_safe_exit_states(self):
+        # 時間上限の退出に加え、モーダル対処前に楽曲選択で抜けてもよいこと（既存の維持）
+        self.assertIn("songselect", AL.SAFE_EXIT_STATES)
+
+
 class TestLiveAbandonedGuard(unittest.TestCase):
     """クリアを挟まずに START が続いたら、**押す前に** live_abandoned で停止すること。
 

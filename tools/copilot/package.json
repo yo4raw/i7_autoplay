@@ -1,0 +1,16 @@
+{
+  "name": "i7-autoplay-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "pi-durable based LLM supervisor for the IDOLiSH7 autoplay loop (crash-resumable monitoring agent)",
+  "scripts": {
+    "watch": "node src/supervisor.mjs watch",
+    "once": "node src/supervisor.mjs once"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^1.5.2",
+    "@earendil-works/pi-durable": "^1.5.2",
+    "@earendil-works/pi-schema": "^1.5.2"
+  }
+}

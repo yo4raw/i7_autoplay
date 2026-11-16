@@ -19,6 +19,7 @@ macOS の iPhone ミラーリング越しに IDOLiSH7 の累計イベントラ�
 
 コードの入口は [`../tools/README.md`](../tools/README.md)。
 LLM copilot 用のプロンプト資産は [`../assets/prompts/README.md`](../assets/prompts/README.md)。
+pi-durable 製の常駐監視エージェントは [`../tools/copilot/README.md`](../tools/copilot/README.md)。
 画面グラフのドラフト素材は `../data/screens_draft.yaml`（`superpowers/specs/2026-06-10-screen-graph-design.md` の観察記録。実装前の参考データ）。
 
 ## 実フレームコーパス（git に入っていない）

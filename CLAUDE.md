@@ -133,10 +133,16 @@ LLM に依存しない設計を維持すること。
 プロンプト資産は `assets/prompts/`（**Fable 5 作成済み。実装・運用時に書き直さずそのまま使う**）。
 設計は [`docs/superpowers/specs/2026-07-10-llm-copilot-design.md`](docs/superpowers/specs/2026-07-10-llm-copilot-design.md)。
 
-- **監視・復旧スーパーバイザー**: このリポジトリで Claude Code セッションを開き（Haiku/Sonnet で足りる）
-  `assets/prompts/supervisor_loop.md を読み、その指示に従って /loop で監視して` と指示する
-  （自己ペース /loop、目安 20 分間隔）。正常周回中は何もしないのが規律。
-  `nohup tools/ops/supervise_autolive.sh <target_epoch> &` と併用可。
+- **監視・復旧スーパーバイザー**: 2系統ある。
+  - **pi-durable 版（推奨・クラッシュ再開可能）**: `tools/copilot/`（`@earendil-works/pi-durable`）。
+    `cd tools/copilot && npm install` のあと `tools/copilot/bin/watch.sh <target_epoch> [interval] [model]` を
+    `supervise_autolive.sh` と並走させる。判断表は `assets/prompts/pi_durable_copilot.md`
+    （`supervisor_loop.md` の移植）。プロセスが落ちても SQLite から途中再開する。
+    詳細は [`tools/copilot/README.md`](tools/copilot/README.md)。
+  - **Claude Code /loop 版（従来）**: このリポジトリで Claude Code セッションを開き（Haiku/Sonnet で足りる）
+    `assets/prompts/supervisor_loop.md を読み、その指示に従って /loop で監視して` と指示する
+    （自己ペース /loop、目安 20 分間隔）。正常周回中は何もしないのが規律。
+    `nohup tools/ops/supervise_autolive.sh <target_epoch> &` と併用可。
 - **イベント導線ナビ**: ホーム画面にあるとき
   `assets/prompts/event_navigation.md を読み、ホームからイベントライブ開始まで進めて` と指示する。
   ライブが始まったら `python tools/autolive.py --loops N --flick` を起動。

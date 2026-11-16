@@ -35,7 +35,7 @@ macOS の **iPhone ミラーリング** 越しに **アイドリッシュセブ�
    > 対策は実装済み（きなこパン行を照合し、見つからなければクリックせず安全停止）。
    > 詳細: [`docs/screen-flow.md`](docs/screen-flow.md)「課金事故を防ぐ設計」
 2. **難易度は人が選んだものをそのまま継続する（ユーザー指定・2026-10-20）。**
-   周回は `--keep-selection`（run-forever skill・対話メニュー 1 の既定）で回し、
+   周回は `--keep-selection`（run-forever skill・対話モードでは固定）で回し、
    楽曲選択では曲も難易度もタップせず NEXT だけ押す。人が選んだ難易度を EASY 等へ戻さない。
    > 旧規則は「必ず EASY」。`--keep-selection` を付けない既定経路（Don't Analyze Me + EASY 固定）は
    > 旧運用のために残っているだけで、使うときは人が明示的に選ぶ。

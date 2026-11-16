@@ -61,10 +61,13 @@ interactive_setup() {
 
 CHECK
 
-  local secs="" label="" t now
+  # 実行時間だけを選ばせる。曲の扱いは「人が選んだまま触らない」に固定
+  # （--keep-selection。ユーザー指定 2026-11-16。旧運用の曲自動選択は対話から外した。
+  #  必要なら引数付き起動で I7_TAP_EXTRA を空にして従来どおり動かせる）。
+  local secs="" label="" t now extra="--keep-selection" song="人が選んだまま触らない"
   while [[ -z "$secs" ]]; do
     cat >&2 <<'MENU'
-実行時間:
+実行時間（曲は人が選んだまま周回します）:
   1) 1時間   2) 2時間   3) 4時間   4) 無期限(30日)   5) 終了時刻を指定 (HH:MM)
 MENU
     ask "> "
@@ -82,21 +85,6 @@ MENU
          (( t <= now )) && t=$(( t + 86400 ))   # 過ぎていれば翌日とみなす
          secs=$(( t - now )); label="${REPLY_LINE} まで" ;;
       *) echo "1〜5 で答えてください" >&2 ;;
-    esac
-  done
-
-  local extra="" song=""
-  while [[ -z "$song" ]]; do
-    cat >&2 <<'MENU'
-楽曲選択画面での振る舞い:
-  1) 人が選んだまま触らない（推奨）
-  2) Don't Analyze Me + EASY を自動選択（旧運用。人が明示的に選ぶときだけ）
-MENU
-    ask "> "
-    case "$REPLY_LINE" in
-      1) extra="--keep-selection"; song="人が選んだまま触らない" ;;
-      2) extra="";                 song="Don't Analyze Me + EASY を自動選択" ;;
-      *) echo "1 か 2 で答えてください" >&2 ;;
     esac
   done
 

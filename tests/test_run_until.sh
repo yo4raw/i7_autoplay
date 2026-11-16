@@ -132,31 +132,33 @@ else
   ng "引数なしで入力が無ければ usage を出して落ちる（rc=$rc）"; sed 's/^/       /' "$out"
 fi
 
-# 10) 無期限＋「曲は触らない」を選び、確認で n → サマリは正しく、起動はしない
+# 10) 2時間を選び、確認で n → サマリは正しく、起動はしない。
+#    対話では曲の扱いは「人が選んだまま」（--keep-selection）に固定（2026-11-16）。
 out="$TMP/i_keep.log"
-irun '4\n1\nn\n' "$out"
-if grep -q "2592000秒" "$out" && grep -q -- "--keep-selection" "$out" \
+irun '2\nn\n' "$out"
+if grep -q "7200秒" "$out" && grep -q -- "--keep-selection" "$out" \
    && grep -q "中止" "$out" && ! grep -q "runner start" "$out"; then
   ok "選択内容をサマリに出し、確認で n なら起動しない"
 else
   ng "選択内容をサマリに出し、確認で n なら起動しない"; sed 's/^/       /' "$out"
 fi
 
-# 11) 「曲を自動選択」を選んだら --keep-selection を付けないこと。
-#    ここを取り違えると、人が選んだ曲を勝手に選び直して LIFE を溶かす。
-out="$TMP/i_auto.log"
-irun '1\n2\nn\n' "$out"
-if grep -q "3600秒" "$out" && ! grep -q -- "--keep-selection" "$out"; then
-  ok "曲を自動選択にしたら --keep-selection を付けない"
+# 11) 終了時刻の指定（HH:MM）と、無効な選択肢の聞き直し。
+#    過ぎた時刻は翌日扱い。まず 9（無効）→ 5 → 23:59 → n の順で入力する。
+out="$TMP/i_until.log"
+irun '9\n5\n23:59\nn\n' "$out"
+if grep -q "まで" "$out" && grep -q -- "--keep-selection" "$out" \
+   && grep -q "1〜5" "$out" && grep -q "中止" "$out"; then
+  ok "終了時刻を指定でき、無効な選択肢は聞き直す"
 else
-  ng "曲を自動選択にしたら --keep-selection を付けない"; sed 's/^/       /' "$out"
+  ng "終了時刻を指定でき、無効な選択肢は聞き直す"; sed 's/^/       /' "$out"
 fi
 
 # 12) 多重起動を検出したら拒否する。2プロセスが同じ画面を叩き合うと制御を失う
 #     （docs/operations.md 起動前チェック A-1 の機械化）。
 echo "99999" > "$TMP/pgrep_out"
 out="$TMP/i_dup.log"
-irun '4\n1\ny\n' "$out"
+irun '2\ny\n' "$out"
 rc=$?
 if (( rc != 0 )) && grep -q "既に周回" "$out" && ! grep -q "runner start" "$out"; then
   ok "多重起動を検出したら起動を拒否する"

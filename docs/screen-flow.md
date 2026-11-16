@@ -21,7 +21,7 @@
 
 ```mermaid
 flowchart TD
-    R["run_until.sh<br/>指定時刻まで回す<br/>切断・認識不能・判定エラーは待機<br/>Macロックは解除を促す<br/>引数なしなら対話で設定"]
+    R["run_until.sh<br/>指定時刻まで回す<br/>切断・認識不能・判定エラーは待機<br/>Macロックは解除を促す<br/>引数なしなら対話（時間選択＋確認）"]
     S["supervise_autolive.sh<br/>落ちたら再起動<br/>rc=42 なら再起動しない"]
     A["autolive.py<br/>画面認識と打鍵"]
     R -->|connected() が真なら起動| S

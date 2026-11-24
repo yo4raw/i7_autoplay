@@ -14,7 +14,8 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOLS = os.path.join(ROOT, "tools")
 
-PROD = ["autolive.py", "driver.py", "note_engine.py", "ocr.py", "tap_jitter.py"]
+PROD = ["autolive.py", "driver.py", "kinako.py", "matching.py",
+        "note_engine.py", "ocr.py", "tap_jitter.py"]
 OPS = ["supervise_autolive.sh", "freeze_sentinel.sh", "morning_watcher.sh",
        "pause_guard.sh", "reconnect_watcher.py", "recover_freeze.py",
        "unlock_watcher.py", "corpus_collector.py", "result_log.py",
@@ -113,8 +114,8 @@ class TestNoCwdRelativeImports(unittest.TestCase):
         tools/ops・tools/probes へ移した個別スクリプトを他ディレクトリから
         実行した際に ModuleNotFoundError で壊れる。"""
         import_pattern = re.compile(
-            r"^\s*(import\s+(driver|autolive|note_engine)\b"
-            r"|from\s+(driver|autolive|note_engine)\s+import\b)",
+            r"^\s*(import\s+(driver|autolive|note_engine|matching|kinako|ocr|tap_jitter)\b"
+            r"|from\s+(driver|autolive|note_engine|matching|kinako|ocr|tap_jitter)\s+import\b)",
             re.MULTILINE,
         )
         offenders = []

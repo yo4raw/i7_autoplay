@@ -1,17 +1,19 @@
 """運用スクリプト間のプロセス所有権の回帰テスト（実機不要）。
 
-背景（2026-08-01）:
-run_until.sh が最上位に入ったことで、下位のガードと所有権が競合していた。
+背景（2026-08-01 / 2026-11-24 拡張）:
+run_until.sh が最上位に入ったことで、下位のガードや外部コパイロットと所有権が競合していた。
 
 - pause_guard.sh は PAUSE 嵐を検知して supervisor を kill するが、run_until が
   それを検知して**再起動し、停止指示を打ち消していた**
-- freeze_sentinel.sh は kill 後に自分で supervisor を起動するため、run_until の
-  ものと**二重起動**になっていた（実際に autolive が2プロセス同時に走る事故が発生）
+- freeze_sentinel.sh や tools/copilot が自分で supervise_autolive.sh を直接起動すると、
+  run_until のものと**二重起動**になる（実際に autolive が2プロセス同時に走る事故が発生）
 
 方針: **プロセスの生殺与奪は run_until.sh に一本化する**。
 - pause_guard は最上位（run_until）から順に止める
 - freeze_sentinel は autolive だけ落とし、supervisor に任せる
+- tools/copilot の restart_supervisor も supervise_autolive.sh を直接叩かず run_until.sh を起動する
 """
+import ast
 import os
 import re
 import subprocess
@@ -19,6 +21,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OPS = os.path.join(ROOT, "tools", "ops")
+COPILOT_SRC = os.path.join(ROOT, "tools", "copilot", "src", "supervisor.mjs")
 
 
 def read(name):
@@ -102,6 +105,19 @@ class TestOnlyRunnerLaunchesSupervisor(unittest.TestCase):
         self.assertEqual(["run_until.sh"], sorted(set(launchers)),
                          f"supervisor を起動しているスクリプト: {sorted(set(launchers))}")
 
+    def test_copilot_launches_runner_not_supervisor(self):
+        """tools/copilot も supervise_autolive.sh を直接叩かず run_until.sh 経由で起動すること。"""
+        with open(COPILOT_SRC, encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertNotRegex(
+            src,
+            r"nohup\s+tools/ops/supervise_autolive\.sh",
+            "copilot が supervise_autolive.sh を直接起動している（run_until.sh と二重起動する）",
+        )
+        self.assertIn("tools/ops/run_until.sh", src)
+        self.assertIn("--keep-selection", src)
+        self.assertIn(".venv/bin/python", src)
+
 
 class TestScriptsParse(unittest.TestCase):
     def test_all_ops_scripts_parse(self):
@@ -114,10 +130,6 @@ class TestScriptsParse(unittest.TestCase):
                 self.assertEqual(0, r.returncode, r.stderr)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestNoBlindTapping(unittest.TestCase):
     """復旧ツールが既知画面以外を盲目タップしないこと。
 
@@ -126,11 +138,10 @@ class TestNoBlindTapping(unittest.TestCase):
     タップするフォールバックがあった。アプリの強制終了に失敗した状態でこれが発火し、
     盲目タップを繰り返した結果**ゲームではない別アプリの画面まで操作してしまった**。
 
-    ドキュメントの記述を信用せず、実装が盲目タップしないことをテストで固定する。
+    ドキュメントの記述を信用せず、実装が盲目タップしないことを AST で固定する。
     """
 
     def test_blind_center_tap_is_disabled(self):
-        import re
         src = read("recover_freeze.py")
         m = re.search(r"^BLIND_CENTER_TAP\s*=\s*(\w+)", src, re.M)
         self.assertIsNotNone(m, "BLIND_CENTER_TAP のフラグが無い")
@@ -138,9 +149,36 @@ class TestNoBlindTapping(unittest.TestCase):
                          "盲目タップが有効。ゲーム外の画面を操作しうる")
 
     def test_center_tap_is_gated_by_the_flag(self):
-        """中央タップの実行がフラグで確実に塞がれていること。"""
-        for ln in read("recover_freeze.py").split("\n"):
-            if "center tap" in ln and not ln.lstrip().startswith("#"):
-                # 実行行に到達する条件式にフラグが含まれていること
-                self.assertIn("BLIND_CENTER_TAP", read("recover_freeze.py"))
-                break
+        """不一致フォールバック側の click_frac 呼び出しが BLIND_CENTER_TAP 条件の内側にあること。"""
+        src = read("recover_freeze.py")
+        tree = ast.parse(src)
+        gated_calls = 0
+        ungated_fallback_calls = 0
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If):
+                test_dump = ast.dump(node.test)
+                if "not acted" in ast.unparse(node.test):
+                    for sub in ast.walk(node):
+                        if isinstance(sub, ast.If) and "BLIND_CENTER_TAP" in ast.dump(sub.test):
+                            for call in ast.walk(sub):
+                                if isinstance(call, ast.Call) and "click_frac" in ast.unparse(call.func):
+                                    gated_calls += 1
+                        elif sub is not node and isinstance(sub, ast.Call) and "click_frac" in ast.unparse(sub.func):
+                            # BLIND_CENTER_TAP を持たない直下の click_frac がないか検査
+                            if "BLIND_CENTER_TAP" not in test_dump:
+                                ungated_fallback_calls += 1
+        self.assertGreaterEqual(gated_calls, 1, "不一致分岐の click_frac が見つからない")
+        # gated_calls 自身が walk(node) にも現れるため、総 click_frac 数と一致することを確認
+        not_acted_ifs = [
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.If) and "not acted" in ast.unparse(n.test)
+        ]
+        total_calls = sum(
+            1 for n in not_acted_ifs for c in ast.walk(n)
+            if isinstance(c, ast.Call) and "click_frac" in ast.unparse(c.func)
+        )
+        self.assertEqual(gated_calls, total_calls, "BLIND_CENTER_TAP で保護されていない click_frac がある")
+
+
+if __name__ == "__main__":
+    unittest.main()

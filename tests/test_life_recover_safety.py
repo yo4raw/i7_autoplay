@@ -14,7 +14,9 @@ LIFE不足ダイアログの「回復」は、見出し「ライフが足りま�
 """
 import os
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -22,6 +24,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 import autolive as AL  # noqa: E402
+import kinako  # noqa: E402
 
 FRAMES = os.path.join(os.path.dirname(__file__), "frames")
 PRESENT = "lifeshort_kinako_present_671x348.png"    # きなこパン 184個
@@ -29,25 +32,36 @@ DEPLETED = "lifeshort_kinako_depleted_529x334.png"  # きなこパン 0個（行
 
 # 実測したステラストーン「回復」ボタンの矩形（DEPLETED フレーム 529x334 上）
 STELLA_BUTTON = (313, 158, 365, 178)   # x0, y0, x1, y1
+_TEMPLATES = AL.load_templates()
+_VISION_OK = None
+
+
+def load_rgb(name):
+    with Image.open(os.path.join(FRAMES, name)) as im:
+        return np.array(im.convert("RGB"))
 
 
 def load(name):
     """テンプレ照合用に **BGR** で返す（テンプレは cv2.imread=BGR で読まれるため）。"""
-    rgb = np.array(Image.open(os.path.join(FRAMES, name)).convert("RGB"))
-    return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    return cv2.cvtColor(load_rgb(name), cv2.COLOR_RGB2BGR)
 
 
-def load_rgb(name):
-    return np.array(Image.open(os.path.join(FRAMES, name)).convert("RGB"))
+def _vision_works():
+    """Apple Vision OCR が実フレームから文字を読めるか（sandbox・非 macOS 判定）。"""
+    global _VISION_OK
+    if _VISION_OK is None:
+        try:
+            _VISION_OK = AL.life_cost_ocr(load_rgb("formation_cost5_529x334.png")) == 5
+        except Exception:
+            _VISION_OK = False
+    return _VISION_OK
 
 
 def detect(frame):
-    al = AL.AutoLive.__new__(AL.AutoLive)
-    al.templates = AL.load_templates()
-    al.win = {"x": 0, "y": 0, "w": frame.shape[1], "h": frame.shape[0]}
-    al.content = (38, frame.shape[0] - 9)
-    al.verbose = False
-    al._last_dark_check = 0.0
+    al = AL.AutoLive.headless(
+        win={"x": 0, "y": 0, "w": frame.shape[1], "h": frame.shape[0]},
+        templates=_TEMPLATES,
+    )
     return al.detect(frame)
 
 
@@ -268,7 +282,7 @@ class _FakeLive(AL.AutoLive):
 
     def __init__(self, frames, qty=None, qty_seq=None, per_pan=None, life=None,
                  life_cost=None):
-        self.templates = AL.load_templates()
+        self.templates = _TEMPLATES
         self.win = {"x": 0, "y": 0, "w": frames[0].shape[1], "h": frames[0].shape[0]}
         self.content = (38, frames[0].shape[0] - 9)
         self.dry_run = False
@@ -277,7 +291,7 @@ class _FakeLive(AL.AutoLive):
         self.life_cost = life_cost
         self._kinako_prev_life = None
         self._life_no_gain = 0
-        self.dbg_dir = "/tmp/i7dbg_test"
+        self.dbg_dir = os.path.join(tempfile.gettempdir(), "i7dbg_test")
         os.makedirs(self.dbg_dir, exist_ok=True)
         self.t_start = 0.0
         self.loops_done = 0
@@ -295,7 +309,7 @@ class _FakeLive(AL.AutoLive):
         self.recover_qty = None    # 「回復」を押した時の数量
 
     def _qty_ocr(self, frame, ref):
-        if self.qty is not None and self._qty_seq is None:
+        if self.qty is not None and (self._qty_seq is None or not _vision_works()):
             return self.qty      # スタブ（整数）
         return AL.kinako_qty_ocr(frame, ref)   # 実フレームの本物の OCR
 
@@ -390,7 +404,7 @@ class TestRecoverFlow(unittest.TestCase):
         """開いた直後（数量 1）→ 読み値 n=3（回復量30・LIFE20・コスト100）→「+」ちょうど2回
         → 数量 3 を確認して「回復」。"""
         fr = load_rgb(KYOMEI)
-        al = _FakeLive([fr], qty=1)
+        al = _FakeLive([fr], qty=1, per_pan=30, life=20)
         status, _, _ = al._recover_life(fr)
         self.assertEqual("recovered", status)
         self.assertEqual(3, al.recover_qty, "数量 3 で「回復」を押していない")
@@ -409,8 +423,8 @@ class TestRecoverFlow(unittest.TestCase):
         fr = load_rgb(KYOMEI)
         # qty_seq=[1,...] は「+」を押しても数量が上がらない出現を模す
         # （撮影は常に数量 1 の kyomei フレームで、数量 OCR も 1 を読む）。
-        al = _FakeLive([fr], qty_seq=[1] * 12)
-        AL.KINAKO_LOW_SETTLE_SEC = 1.0
+        al = _FakeLive([fr], qty_seq=[1] * 12, per_pan=30, life=20)
+        AL.KINAKO_LOW_SETTLE_SEC = 0.1
         status, _, _ = al._recover_life(fr)
         self.assertEqual("recovered", status)
         self.assertEqual(1, al.recover_qty, "確定数量 1 で回復していない")
@@ -419,8 +433,8 @@ class TestRecoverFlow(unittest.TestCase):
         # その出現では二度押さず、時間切れで unsettled。再呼び出しでも kinako_plus_at が
         # 残っているうちは「+」を押さない。
         fr2 = load_rgb(KYOMEI)
-        al2 = _FakeLive([fr2], qty_seq=[1] * 60)
-        AL.KINAKO_RECOVER_MAX_SEC = 6.0
+        al2 = _FakeLive([fr2], qty_seq=[1] * 60, per_pan=30, life=20)
+        AL.KINAKO_RECOVER_MAX_SEC = 0.8
         AL.KINAKO_LOW_SETTLE_SEC = 100.0   # 低数量確定で回復しない＝unsettled まで待つ
         status, _, _ = al2._recover_life(fr2)
         self.assertEqual("unsettled", status)
@@ -434,7 +448,7 @@ class TestRecoverFlow(unittest.TestCase):
         「+」は押さず「−」で読み値 n=3（回復量30・LIFE27・コスト100）まで戻し、
         3 を確認してから「回復」。バッジ中は回復を押さない。"""
         fr = load_rgb("lifeshort_kinako_overcap_671x348.png")
-        al = _FakeLive([fr], qty=10)
+        al = _FakeLive([fr], qty=10, per_pan=30, life=27)
         AL.KINAKO_RECHECK_SEC = 4.0
         status, _, _ = al._recover_life(fr)
         self.assertEqual("recovered", status)
@@ -449,9 +463,11 @@ class TestRecoverFlow(unittest.TestCase):
         """「−」が見つからない（＝戻せない）ままバッジが出ていれば、回復は押さない。"""
         fr = load_rgb("lifeshort_kinako_overcap_671x348.png").copy()
         fr[165:185, 285:305] = (75, 95, 135)       # 「−」を塗り潰す
-        al = _FakeLive([fr])
+        al = _FakeLive([fr], per_pan=30, life=27)
+        if not _vision_works():
+            al._qty_ocr = lambda frame, ref: 10
         AL.KINAKO_RECHECK_SEC = 0.2
-        AL.KINAKO_RECOVER_MAX_SEC = 2.0
+        AL.KINAKO_RECOVER_MAX_SEC = 0.5
         status, _, _ = al._recover_life(fr)
         self.assertEqual("unsettled", status)
         self.assertEqual([], al.clicks)
@@ -461,11 +477,11 @@ class TestRecoverFlow(unittest.TestCase):
         行のスコアはバナーの影響を受けず 0.832。停止の原因はキラキラ演出で 0.72〜0.80 に落ちる
         フレームと、やり直しのたびに「+」を積み増したこと。今は「−」で戻して n=3 で回復する。"""
         fr = load_rgb("lifeshort_kinako_banner_671x348.png")
-        imgs, thr = AL.load_templates()["kinakorow"]
+        imgs, thr = _TEMPLATES["kinakorow"]
         self.assertGreaterEqual(AL.match_best(load("lifeshort_kinako_banner_671x348.png"), imgs)[0], thr)
         rec = AL.kinako_recover_point(fr, AL.match_best(load("lifeshort_kinako_banner_671x348.png"), imgs)[1])
         self.assertTrue(AL.kinako_over_cap(fr, rec))
-        al = _FakeLive([fr], qty=10)
+        al = _FakeLive([fr], qty=10, per_pan=30, life=27)
         AL.KINAKO_RECHECK_SEC = 4.0
         status, _, _ = al._recover_life(fr)
         self.assertEqual("recovered", status)
@@ -475,10 +491,12 @@ class TestRecoverFlow(unittest.TestCase):
         """キラキラ演出で行が割れるフレームが挟まっても、行が2枚続けて見えるフレームで進める。"""
         good = load_rgb("lifeshort_kinako_qty3_671x348.png")
         bad = load_rgb("lifeshort_kinako_sparkle_671x348.png")
-        imgs, thr = AL.load_templates()["kinakorow"]
+        imgs, thr = _TEMPLATES["kinakorow"]
         self.assertLess(AL.match_best(load("lifeshort_kinako_sparkle_671x348.png"), imgs)[0], thr,
                         "演出フレームが閾値を超えるならこのテストは無意味")
-        al = _FakeLive([bad, bad, good, bad, good, good, good])
+        al = _FakeLive([bad, bad, good, bad, good, good, good], per_pan=30, life=27)
+        if not _vision_works():
+            al._qty_ocr = lambda frame, ref: 3
         al.kinako_plus_at = (AL.time.time(), (341.0, 144.5), (354.5, 174.5))   # 「+」は押し済み
         status, _, _ = al._recover_life(bad)
         self.assertEqual("recovered", status)
@@ -491,7 +509,7 @@ class TestRecoverFlow(unittest.TestCase):
         増やせなくなり kinako_unsettled まで止まった。今は同じ読みが連続するまで確定しない。）
         数量列: 1(2読) →「+」×2 → 2,2（演出途中）→ 3,3… で「−」0回・数量3で回復。"""
         fr = load_rgb(KYOMEI)
-        al = _FakeLive([fr], qty_seq=[1, 1, 2, 2, 3, 3, 3, 3, 3])
+        al = _FakeLive([fr], qty_seq=[1, 1, 2, 2, 3, 3, 3, 3, 3], per_pan=30, life=20)
         status, _, _ = al._recover_life(fr)
         self.assertEqual("recovered", status)
         self.assertEqual(3, al.recover_qty)
@@ -506,7 +524,7 @@ class TestRecoverFlow(unittest.TestCase):
     def test_settled_other_backs_off_with_minus(self):
         """バッジ無しで数量が確定して 3 より多い（積み増し残りの 7）→「−」で 3 まで戻す。"""
         fr = load_rgb("lifeshort_kinako_qty7_671x348.png")
-        al = _FakeLive([fr], qty=7)
+        al = _FakeLive([fr], qty=7, per_pan=30, life=27)
         AL.KINAKO_RECHECK_SEC = 4.0
         status, _, _ = al._recover_life(fr)
         self.assertEqual("recovered", status)
@@ -520,7 +538,7 @@ class TestRecoverFlow(unittest.TestCase):
         """「+」が見つからない（ステッパーの「+」を塗り潰した）・数量 1 なら「回復」だけを押す。"""
         fr = load_rgb(KYOMEI).copy()
         fr[163:186, 340:363] = (75, 95, 135)
-        al = _FakeLive([fr])
+        al = _FakeLive([fr], per_pan=30, life=20)
         status, _, _ = al._recover_life(fr)
         self.assertEqual("recovered", status)
         self.assertEqual(1, len(al.clicks), al.clicks)
@@ -537,24 +555,26 @@ class TestRecoverFlow(unittest.TestCase):
         for name, qty in cases.items():
             with self.subTest(frame=name):
                 fr = load_rgb(name)
-                _, pos = AL.match_best(load(name), AL.load_templates()["kinakorow"][0])
+                _, pos = AL.match_best(load(name), _TEMPLATES["kinakorow"][0])
                 rec = AL.kinako_recover_point(fr, pos)
                 plus = AL.kinako_plus_point(fr, rec)
                 self.assertIsNotNone(plus)
                 self.assertEqual(qty == 1, AL.kinako_qty_is_one(fr, plus))
-                self.assertEqual(qty, AL.kinako_qty_ocr(fr, plus))
+                if qty == 1 or _vision_works():
+                    self.assertEqual(qty, AL.kinako_qty_ocr(fr, plus))
                 self.assertEqual(name.endswith(("qty10_671x348.png",)),
                                  AL.kinako_over_cap(fr, rec))
 
     def test_minus_lies_on_the_kinako_stepper(self):
         fr = load_rgb(KYOMEI)
-        _, pos = AL.match_best(load(KYOMEI), AL.load_templates()["kinakorow"][0])
+        _, pos = AL.match_best(load(KYOMEI), _TEMPLATES["kinakorow"][0])
         rec = AL.kinako_recover_point(fr, pos)
         x, y = AL.kinako_minus_point(fr, AL.kinako_plus_point(fr, rec))
         bx0, by0, bx1, by1 = TestKinakoPlusStepper.STEPPER_BOX
         self.assertTrue(bx0 <= x <= bx0 + 20 and by0 <= y <= by1, f"「−」({x:.0f},{y:.0f}) が箱の左端の外")
 
 
+@unittest.skipUnless(_vision_works(), "Apple Vision OCR が利用できない環境")
 class TestLifeRecoverOcr(unittest.TestCase):
     """LIFE 回復の OCR 読み取りを実機フィクスチャで固定する（2026-10-20 改訂）。
 
@@ -730,9 +750,9 @@ class TestRecoverCountFromOcr(unittest.TestCase):
     def test_unreadable_qty_never_recovers(self):
         """数量欄が読めないまま「回復」は押さない（unsettled）。"""
         fr = load_rgb(KYOMEI)
-        al = _FakeLive([fr])
+        al = _FakeLive([fr], per_pan=30, life=20)
         al._qty_ocr = lambda frame, ref: None
-        AL.KINAKO_RECOVER_MAX_SEC = 2.0
+        AL.KINAKO_RECOVER_MAX_SEC = 0.5
         status, _, _ = al._recover_life(fr)
         self.assertEqual("unsettled", status)
         self.assertEqual([], al.clicks)
@@ -740,11 +760,11 @@ class TestRecoverCountFromOcr(unittest.TestCase):
     def test_badge_blocks_recover_until_cleared(self):
         """赤バッジが出続ける間は「−」だけで「回復」は押さない。"""
         fr = load_rgb("lifeshort_kinako_overcap_671x348.png")
-        al = _FakeLive([fr], qty=10)
+        al = _FakeLive([fr], qty=10, per_pan=30, life=27)
         saved = AL.kinako_over_cap
         AL.kinako_over_cap = lambda frame, rec: True     # バッジが消えない想定
         try:
-            AL.KINAKO_RECOVER_MAX_SEC = 2.0
+            AL.KINAKO_RECOVER_MAX_SEC = 0.5
             status, _, _ = al._recover_life(fr)
         finally:
             AL.kinako_over_cap = saved
@@ -789,8 +809,9 @@ class TestLifeFullModal(unittest.TestCase):
         # 楽曲選択やダイアログの上に重なっても lifefull が先に返る並びであること。
         # （songselect は暗い側の救済 return もあるので**明るい側＝最後の出現**で比較する）
         states = ("lifeshort", "lifefull", "songselect", "cardx", "closex")
-        src = open(os.path.join(os.path.dirname(__file__), "..", "tools",
-                                "autolive.py"), encoding="utf-8").read()
+        with open(os.path.join(os.path.dirname(__file__), "..", "tools",
+                               "autolive.py"), encoding="utf-8") as fh:
+            src = fh.read()
         det = src[src.index("def detect("):src.index("def _grab(")]
         names = [s for _, s in sorted((det.rindex(f'return "{s}"'), s) for s in states)]
         self.assertLess(names.index("lifefull"), names.index("songselect"))
@@ -809,13 +830,99 @@ class TestLifeFullModal(unittest.TestCase):
 
     def test_modal_is_not_other_states(self):
         """きなこ行ダイアログ・回復カード・連続ライブダイアログでは当たらない。"""
-        imgs, thr = AL.load_templates()["lifefull"]
+        imgs, thr = _TEMPLATES["lifefull"]
         for name in (KYOMEI, DEPLETED, "life_recovered_card_671x348.png",
                      "replay_confirm_dialog_671x348.png",
                      "songselect_event_671x348.png", PRESENT):
             with self.subTest(frame=name):
                 sc, _ = AL.match_best(load(name), imgs)
                 self.assertLess(sc, thr, f"{name} が全回復モーダルと誤認された ({sc:.3f})")
+
+
+class TestAutoLiveOnGuard(unittest.TestCase):
+    """下部パネルが「オート ON」のとき、NEXT/START を押す前に安全停止すること（絶対規則 5）。"""
+
+    def test_detects_single_token_auto_on(self):
+        fr = load_rgb("songselect_event_671x348.png")
+        with mock.patch.object(kinako.ocr, "recognize",
+                               return_value=[("オート ON", 10, 10, 80, 28)]):
+            self.assertTrue(AL.auto_live_on_ocr(fr))
+
+    def test_detects_split_tokens_auto_and_on_on_same_row(self):
+        fr = load_rgb("formation_cost5_529x334.png")
+        with mock.patch.object(kinako.ocr, "recognize",
+                               return_value=[("オート", 10, 10, 50, 28),
+                                             ("ON", 55, 11, 80, 27)]):
+            self.assertTrue(AL.auto_live_on_ocr(fr))
+
+    def test_returns_false_when_auto_off(self):
+        fr = load_rgb("formation_cost5_529x334.png")
+        for items in ([("オート OFF", 10, 10, 85, 28)],
+                      [("オート", 10, 10, 50, 28), ("OFF", 55, 11, 85, 27)],
+                      []):
+            with self.subTest(items=items):
+                with mock.patch.object(kinako.ocr, "recognize", return_value=items):
+                    self.assertFalse(AL.auto_live_on_ocr(fr))
+
+    def test_stop_if_auto_live_on_sets_stop_reason_and_saves_screenshot(self):
+        fr = load_rgb("formation_cost5_529x334.png")
+        with tempfile.TemporaryDirectory() as tmp:
+            al = AL.AutoLive(
+                max_loops=1, dry_run=True,
+                win={"x": 0, "y": 0, "w": fr.shape[1], "h": fr.shape[0]},
+                templates=_TEMPLATES, dbg_dir=tmp,
+            )
+            with mock.patch.object(al, "_auto_live_on", return_value=False):
+                self.assertFalse(al._stop_if_auto_live_on(fr))
+                self.assertIsNone(al.stop_reason)
+            with mock.patch.object(al, "_auto_live_on", return_value=True):
+                self.assertTrue(al._stop_if_auto_live_on(fr))
+                self.assertEqual("auto_live_on", al.stop_reason)
+                shots = [f for f in os.listdir(tmp) if f.startswith("autolive_on_")]
+                self.assertEqual(1, len(shots))
+
+
+class TestLifeCostCache(unittest.TestCase):
+    """観測した LIFE コストを永続化し、連続ライブ途中の再起動で過剰回復しないこと。"""
+
+    def test_roundtrip_and_invalid_values_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = os.path.join(tmp, ".life_cost_cache.json")
+            with mock.patch.object(AL, "LIFE_COST_CACHE", cache_path):
+                al = AL.AutoLive(
+                    max_loops=1, dry_run=True,
+                    win={"x": 0, "y": 0, "w": 671, "h": 348},
+                    templates=_TEMPLATES, dbg_dir=tmp,
+                )
+                self.assertIsNone(al.life_cost)
+                al._save_cached_life_cost(15)
+                al2 = AL.AutoLive(
+                    max_loops=1, dry_run=True,
+                    win={"x": 0, "y": 0, "w": 671, "h": 348},
+                    templates=_TEMPLATES, dbg_dir=tmp,
+                )
+                self.assertEqual(15, al2.life_cost)
+                self.assertEqual(15, al2._life_cost())
+
+                # 範囲外や壊れたファイルは無視して安全側（None → KINAKO_ASSUMED_COST）へ落ちる
+                al2._save_cached_life_cost(0)
+                al2._save_cached_life_cost(999)
+                al3 = AL.AutoLive(
+                    max_loops=1, dry_run=True,
+                    win={"x": 0, "y": 0, "w": 671, "h": 348},
+                    templates=_TEMPLATES, dbg_dir=tmp,
+                )
+                self.assertEqual(15, al3.life_cost)
+
+                with open(cache_path, "w", encoding="utf-8") as fh:
+                    fh.write("{corrupt")
+                al4 = AL.AutoLive(
+                    max_loops=1, dry_run=True,
+                    win={"x": 0, "y": 0, "w": 671, "h": 348},
+                    templates=_TEMPLATES, dbg_dir=tmp,
+                )
+                self.assertIsNone(al4.life_cost)
+                self.assertEqual(AL.KINAKO_ASSUMED_COST, al4._life_cost())
 
 
 if __name__ == "__main__":

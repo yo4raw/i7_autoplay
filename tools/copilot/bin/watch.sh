@@ -8,6 +8,7 @@
 #
 # 再起動は人間が行う（プロセスが死んだら同じコマンドを再実行。durable task が途中から再開する）。
 set -u
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 cd "$(dirname "$0")/.."
 
 TARGET="${1:?usage: watch.sh <target_epoch> [interval_sec] [model]}"

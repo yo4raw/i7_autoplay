@@ -139,5 +139,27 @@ class TestCalibrationGeometryGate(unittest.TestCase):
         self.assertIn("跳躍", why)
 
 
+class TestDefaultCirclesImmutable(unittest.TestCase):
+    """CIRCLES[:] の in-place 更新で不変の基準座標 DEFAULT_CIRCLES が汚れないこと。"""
+
+    def test_default_circles_unaffected_by_in_place_mutation(self):
+        import autolive as AL
+        self.assertIsInstance(AL.DEFAULT_CIRCLES, tuple)
+        self.assertEqual(4, len(AL.DEFAULT_CIRCLES))
+        saved = list(AL.CIRCLES)
+        try:
+            AL.CIRCLES[:] = [(0.228, 0.655), (0.334, 0.824), (0.663, 0.824), (0.771, 0.655)]
+            self.assertNotEqual(list(AL.DEFAULT_CIRCLES), AL.CIRCLES)
+            al = AL.AutoLive(
+                max_loops=1, dry_run=True, auto_circles=False,
+                win={"x": 0, "y": 0, "w": 671, "h": 348},
+                templates={}, dbg_dir=None,
+            )
+            self.assertIsNotNone(al)
+            self.assertEqual(list(AL.DEFAULT_CIRCLES), AL.CIRCLES)
+        finally:
+            AL.CIRCLES[:] = saved
+
+
 if __name__ == "__main__":
     unittest.main()

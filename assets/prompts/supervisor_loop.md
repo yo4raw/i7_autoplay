@@ -10,7 +10,7 @@
 
 ## 毎回のチェック手順
 
-1. **プロセス生存**: `pgrep -f 'autolive.py'` と `pgrep -f supervise_autolive`。
+1. **プロセス生存**: `pgrep -fl 'tools/ops/run_until\.sh|supervise_autolive|autolive\.py'`。
 2. **ログ前進**: `/tmp/i7_autorun.log` の末尾（`tail -30`）。前回チェック時から
    「★ライブ クリア（通算 N）」の N が増えているか、または gameplay 中のログが出ているか。
    1ライブ ≈ 115秒 + リザルト処理なので、**10分間クリア数が増えていなければ異常**。
@@ -32,10 +32,11 @@
 
 | 症状（ログ/画面の見え方） | 原因 | 対処 |
 |---|---|---|
-| autolive プロセスが死んでいるだけ（supervisor も死んでいる） | クラッシュ/サイレント死（`docs/operations.md`） | `nohup tools/ops/supervise_autolive.sh <target_epoch> &` で再起動（ログ: /tmp/i7_supervisor.log） |
-| `gameplay が Ns 継続（異常/ミラーリング切断の可能性）` で停止、スクショが暗い/「iPhoneの使用中は…」表示 | iPhone を物理的に触った等でミラーリング切断 | `open -b com.apple.ScreenContinuity` で再接続 → 30秒待つ → `tools/driver.py info` でウィンドウ検出を確認 → ゲーム画面が戻っていれば autolive を再起動 |
-| 再接続後、activate していないのに約5秒ごとに PAUSE↔再開を繰り返す（ログに PAUSE 検出が高頻度） | **§17.10: 再接続セッションで合成入力が genuine と認識されない iPhone 本体側の状態。Mac 側の打ち手は無い** | autolive を停止し、**人間に「iPhone 本体の電源再投入が必要」と通知**して待機。ミラーリングの再起動では直らない |
-| `LIFE不足がN回連続` で停止 | きなこパン枯渇 | 復旧不能（ステラは使わない）。人間に「きなこパン補充または周回終了」を通知 |
+| `run_until.sh`・`supervise_autolive`・`autolive.py` がすべて死んでいる | クラッシュ/サイレント死（`docs/operations.md`） | `nohup tools/ops/run_until.sh <target_epoch> > /dev/null 2>&1 &` で再起動（`run_until.sh` が生存して切断待機中なら何もしない） |
+| `gameplay が Ns 継続（異常/ミラーリング切断の可能性）` で停止、スクショが暗い/「iPhoneの使用中は…」表示 | iPhone を物理的に触った等でミラーリング切断 | `open -b com.apple.ScreenContinuity` で再接続 → 30秒待つ → `.venv/bin/python tools/driver.py info` でウィンドウ検出を確認 → ゲーム画面が戻っており全プロセス停止中なら `run_until.sh` を再起動 |
+| 再接続後、activate していないのに約5秒ごとに PAUSE↔再開を繰り返す（ログに PAUSE 検出が高頻度 / `pause_stuck` / `giveup_loop`） | **再接続病: 再接続セッションで合成入力が genuine と認識されない状態（端末の再起動は無効）** | 周回を停止し、**人間に「iPhone ミラーリングの接続を一度切って繋ぎ直す必要がある」と通知**して待機 |
+| `きなこパン行が見つからない`（`kinako_missing`）または `現在 LIFE が増えない読みが 3 回続いた`（`life_short_persist`）で停止 | きなこパン枯渇 | 復旧不能（ステラは使わない）。人間に「きなこパン補充または周回終了」を通知 |
+| `下部パネルが「オート ON」`（`auto_live_on`）で停止 | ゲーム側の設定がオート ON | ブリンドリンク誤消費防止の安全停止。人間に「オート OFF に戻して再開」を通知 |
 | iOS バッテリー警告が頻発 | iPhone の充電切れが近い | 人間に「充電確認」を通知（警告自体は autolive が「閉じる」で処理する。低電力モードは絶対に押さない） |
 | 未知画面で安全停止（`menu` 状態でスクショ保存） | 新種ポップアップ/イベント装飾 | スクショを確認。copilot（screen_triage）が有効なら本来自動処理されるはず。無効/失敗時は人間にスクショ添付で通知 |
 | ESC 停止・ユーザー操作の痕跡 | 人間が意図的に止めた | 何もしない（再起動しない） |
@@ -46,7 +47,7 @@
 - autolive はゲームが「楽曲選択 or ライブ中」の状態から再開できる。ホーム画面まで戻って
   しまっている場合は、イベント導線ナビ（`assets/prompts/event_navigation.md`）の手順が
   必要（**LIVE ボタンからの楽曲選択は通常ライブになりイベントptが付かない**。必ずホーム
-  左下のイベントリボンから）。ナビが自動化されていない段階では人間に通知する。
+  右側の EVENT リボンから）。ナビが自動化されていない段階では人間に通知する。
 - 打鍵パラメータを変更したいときは、supervisor を残して autolive の子プロセスだけ
   `pkill -f autolive.py` する（supervisor が更新後コードで自動再起動する。§17.7）。
 - **ライブ（曲）の途中で止めないこと。** その周回ぶんの LIFE が丸ごと無駄になる。

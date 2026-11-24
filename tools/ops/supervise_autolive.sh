@@ -24,7 +24,7 @@ SUPLOG="${I7_SUPERVISOR_LOG:-/tmp/i7_supervisor.log}"
 # `--keep-selection` 等を足したいだけのときに既定を書き写すと、片方だけ古くなって
 # 静かに食い違う。そのため「丸ごと差し替え = I7_TAP_OPTS」と「既定に追記 = I7_TAP_EXTRA」を
 # 分けている。回帰テストは tests/test_run_until.sh の supervise_autolive.sh 節。
-TAP_OPTS="${I7_TAP_OPTS:---flick --auto-circles --note-lead 0.02 --green-hold} ${I7_TAP_EXTRA:-}"
+TAP_OPTS="${I7_TAP_OPTS:---flick --auto-circles --green-hold} ${I7_TAP_EXTRA:-}"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$SUPLOG"; }
 

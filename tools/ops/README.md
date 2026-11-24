@@ -17,7 +17,8 @@
 | `corpus_collector.py` | 周回と並走して画面を受動採取し `tests/corpus_raw/<state>/` へ保存する。**コーパスは `.gitignore` 済み**なので、clone した環境ではこれで採り直す | 現役 |
 
 ```bash
-# 無人運用の標準手順（target_epoch = 終了する UNIX 時刻）
-nohup tools/ops/supervise_autolive.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &
-nohup tools/ops/freeze_sentinel.sh   $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &
+# 無人運用の標準手順（run_until.sh が最上位。切断中は待機し、多重起動も自動拒否する）
+tools/ops/run_until.sh                                              # 対話モード（推奨）
+nohup tools/ops/run_until.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &
+nohup tools/ops/freeze_sentinel.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &
 ```

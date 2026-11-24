@@ -35,6 +35,6 @@ description: Use when asked to start, restart, or resume the IDOLiSH7 event loop
 - 「無制限」= 30 日（対話メニューの「無期限(30日)」と同じ値）。休憩時間に入ると `break_time` で安全停止し、
   接続があるので runner も終了する。再開は人が休憩明けを確認してからこの skill を再実行。
 - きなこパンが尽きると `kinako_missing` で安全停止する。ステラは使わない。
-- 引数付き起動には多重起動ガードが無い。手順 1 は省けない。
+- `run_until.sh` 本体にも多重起動ガードが入っているが、事前確認として手順 1 も維持する。
 - 止めるのはリザルト画面が出てから:
   `pkill -f run_until; pkill -f supervise_autolive; pkill -f tools/autolive; pkill -f 'caffeinate -dimsu'`

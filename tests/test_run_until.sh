@@ -5,6 +5,7 @@
 # 「人手が必要な停止では runner を終了する」「切断中は待機する」を確かめる。
 # シェルの分岐はユニットテストで型検査できないので、実行して確かめるしかない。
 set -u
+unsetopt BG_NICE 2>/dev/null || true
 cd "$(dirname "$0")/.."
 ROOT=$PWD
 TMP=$(mktemp -d)
@@ -27,13 +28,26 @@ chmod +x "$TMP/.venv/bin/python"
 # 本番と資源を共有しないよう、ログとフラグは全てテンポラリへ隔離する
 # 実行開始時点で既にあった本番フラグを記録しておく（テストが作ったものと区別するため）
 PRE_EXISTING=()
-for f in /tmp/i7_safe_stop_fired /tmp/i7_barren_fired; do
+for f in /tmp/i7_safe_stop_fired /tmp/i7_barren_fired /tmp/i7_runner.pid; do
   [[ -e $f ]] && PRE_EXISTING+=($f)
 done
+
+# pgrep をスタブに差し替える。多重起動ガードは引数モード・対話モードの両方で pgrep を
+# 参照するため、**実機で周回が動いているかどうかでテスト結果が変わらないようにする**。
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/pgrep" <<'EOS'
+#!/bin/zsh
+cat "$TMPDIR_STUB/pgrep_out" 2>/dev/null
+exit 0
+EOS
+chmod +x "$TMP/bin/pgrep"
+: > "$TMP/pgrep_out"
 
 export I7_RUNNER_LOG="$TMP/runner.log"
 export I7_SAFE_FLAG="$TMP/safe_fired"
 export I7_BARREN_FLAG="$TMP/barren_fired"
+export I7_LOCK_FILE="$TMP/runner.pid"
+export I7_RUNNER_SLEEP="0.2"
 # connected() が書く例外ファイルと未知画面スクショも本番と分ける
 export I7_CONN_ERR_FILE="$TMP/connected_err.txt"
 export I7_UNKNOWN_SHOT="$TMP/runner_unknown_screen.png"
@@ -42,7 +56,7 @@ run_case() {
   # deny を渡すと「expect が出る」に加えて「deny が出ない」ことも検査する
   local name=$1 connected=$2 flag=$3 expect=$4 deny=${5:-}
   echo "$connected" > "$TMP/connected"
-  rm -f "$I7_SAFE_FLAG" "$I7_BARREN_FLAG"
+  rm -f "$I7_SAFE_FLAG" "$I7_BARREN_FLAG" "$I7_LOCK_FILE"
   # supervisor スタブ: 指定のフラグを立てて即座に戻る
   cat > "$TMP/tools/ops/supervise_autolive.sh" <<EOS
 #!/bin/zsh
@@ -51,16 +65,23 @@ sleep 0.2
 EOS
   chmod +x "$TMP/tools/ops/supervise_autolive.sh"
   local out="$TMP/out.log"
+  : > "$out"
   # macOS には timeout が無いのでバックグラウンド実行＋見張りで打ち切る
-  ( cd "$TMP" && TMPDIR_STUB="$TMP" zsh tools/ops/run_until.sh \
-      $(( $(date +%s) + 8 )) > "$out" 2>&1 ) &
+  ( cd "$TMP" && TMPDIR_STUB="$TMP" PATH="$TMP/bin:$PATH" zsh tools/ops/run_until.sh \
+      $(( $(date +%s) + 2 )) > "$out" 2>&1 ) &
   local pid=$!
   local waited=0
-  while kill -0 $pid 2>/dev/null && (( waited < 120 )); do
+  while kill -0 $pid 2>/dev/null && (( waited < 80 )); do
+    if grep -q "$expect" "$out" 2>/dev/null; then
+      [[ -n "$deny" ]] && sleep 0.15
+      break
+    fi
     sleep 0.1; waited=$(( waited + 1 ))
   done
+  pkill -P $pid 2>/dev/null
   kill -9 $pid 2>/dev/null
   wait $pid 2>/dev/null
+  rm -f "$I7_LOCK_FILE"
   if grep -q "$expect" "$out"; then ok "$name"; else
     ng "$name（期待: $expect）"; sed 's/^/       /' "$out"
   fi
@@ -91,28 +112,44 @@ run_case "認識できない画面のスクショを案内する" 3 "" "runner_u
 run_case "判定エラーは例外として記録する" 4 "" "接続判定でエラー" "iPhone をロックすると自動再接続"
 # 8) その裏返し: ロック中に「iPhone をロック」と案内しないこと（誤誘導の回帰）
 echo "2" > "$TMP/connected"
-rm -f "$I7_SAFE_FLAG" "$I7_BARREN_FLAG"
-( cd "$TMP" && TMPDIR_STUB="$TMP" zsh tools/ops/run_until.sh $(( $(date +%s) + 3 )) \
-    > "$TMP/lock.log" 2>&1 ) & lockpid=$!
-sleep 2; kill -9 $lockpid 2>/dev/null; wait $lockpid 2>/dev/null
+rm -f "$I7_SAFE_FLAG" "$I7_BARREN_FLAG" "$I7_LOCK_FILE"
+( cd "$TMP" && TMPDIR_STUB="$TMP" PATH="$TMP/bin:$PATH" zsh tools/ops/run_until.sh \
+    $(( $(date +%s) + 2 )) > "$TMP/lock.log" 2>&1 ) & lockpid=$!
+sleep 0.5; pkill -P $lockpid 2>/dev/null; kill -9 $lockpid 2>/dev/null; wait $lockpid 2>/dev/null
+rm -f "$I7_LOCK_FILE"
 if grep -q "iPhone をロックすると自動再接続" "$TMP/lock.log"; then
   ng "Macロック中に iPhone ロックを案内しない"
 else
   ok "Macロック中に iPhone ロックを案内しない"
 fi
 
-# --- 対話モード（引数なしで実行したとき） -------------------------------------
-# pgrep をスタブに差し替える。多重起動ガードは pgrep の出力を見て判断するので、
-# **実機で周回が動いているかどうかでテスト結果が変わらないようにする**。
-mkdir -p "$TMP/bin"
-cat > "$TMP/bin/pgrep" <<'EOS'
-#!/bin/zsh
-cat "$TMPDIR_STUB/pgrep_out" 2>/dev/null
-exit 0
-EOS
-chmod +x "$TMP/bin/pgrep"
-: > "$TMP/pgrep_out"
+# 8b) 引数モードでも多重起動（PID ロック）を拒否すること
+echo "$$" > "$I7_LOCK_FILE"
+out="$TMP/arg_lock_dup.log"
+( cd "$TMP" && TMPDIR_STUB="$TMP" PATH="$TMP/bin:$PATH" \
+    zsh tools/ops/run_until.sh $(( $(date +%s) + 5 )) > "$out" 2>&1 )
+rc=$?
+rm -f "$I7_LOCK_FILE"
+if (( rc != 0 )) && grep -q "既に周回" "$out" && ! grep -q "runner start" "$out"; then
+  ok "引数モードでも PID ロックがあれば多重起動を拒否する"
+else
+  ng "引数モードでも PID ロックがあれば多重起動を拒否する（rc=$rc）"; sed 's/^/       /' "$out"
+fi
 
+# 8c) 引数モードでも pgrep 検出があれば多重起動を拒否すること
+echo "99999" > "$TMP/pgrep_out"
+out="$TMP/arg_pgrep_dup.log"
+( cd "$TMP" && TMPDIR_STUB="$TMP" PATH="$TMP/bin:$PATH" \
+    zsh tools/ops/run_until.sh $(( $(date +%s) + 5 )) > "$out" 2>&1 )
+rc=$?
+: > "$TMP/pgrep_out"
+if (( rc != 0 )) && grep -q "既に周回" "$out" && ! grep -q "runner start" "$out"; then
+  ok "引数モードでも pgrep 検出があれば多重起動を拒否する"
+else
+  ng "引数モードでも pgrep 検出があれば多重起動を拒否する（rc=$rc）"; sed 's/^/       /' "$out"
+fi
+
+# --- 対話モード（引数なしで実行したとき） -------------------------------------
 irun() {  # irun <stdin文字列> <出力ファイル>  → 対話モードを走らせて終了コードを返す
   printf "$1" | ( cd "$TMP" && TMPDIR_STUB="$TMP" PATH="$TMP/bin:$PATH" \
       zsh tools/ops/run_until.sh > "$2" 2>&1 )
@@ -204,6 +241,8 @@ sup_case "I7_TAP_EXTRA を autolive へ渡す" "--keep-selection" "--keep-select
 sup_case "既定の --green-hold を消さない" "--keep-selection" "--green-hold" 1
 # 15) 空なら余計なものは付かない
 sup_case "I7_TAP_EXTRA が空なら何も足さない" "" "--keep-selection" 0
+# 15b) --note-lead は autolive.py 側の既定に任せ、supervisor で二重指定しない
+sup_case "既定で --note-lead を上書きしない" "" "--note-lead" 0
 # 16) 本番のログに書いていないこと（テストが周回のログを汚さないための歯止め）
 if [[ -s "$TMP/sup_sup.log" ]]; then
   ok "supervisor のログを差し替えられる"
@@ -214,7 +253,7 @@ fi
 # 本番の資源に触れていないことを確認する（テストが周回を壊さないための歯止め）。
 # **既に存在していたものは対象外**。本番の安全停止が残したフラグを「テストが作った」と
 # 誤検知していた（実際に 2026-08-02 04:56 の停止フラグで誤検出した）。
-for f in /tmp/i7_safe_stop_fired /tmp/i7_barren_fired; do
+for f in /tmp/i7_safe_stop_fired /tmp/i7_barren_fired /tmp/i7_runner.pid; do
   if [[ -e $f && -z ${PRE_EXISTING[(r)$f]} ]]; then
     ng "本番のフラグ $f を作ってしまった"
   fi

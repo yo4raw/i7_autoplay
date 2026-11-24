@@ -14,7 +14,7 @@
  * 環境変数: ANTHROPIC_API_KEY（実モデル使用時）。I7_COPILOT_* は CLI 引数の既定値。
  */
 import { execFile } from "node:child_process";
-import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -41,9 +41,13 @@ const REPO_ROOT = resolve(COPILOT_DIR, "../..");
 const PROMPT_PATH = join(REPO_ROOT, "assets/prompts/pi_durable_copilot.md");
 const AUTORUN_LOG = "/tmp/i7_autorun.log";
 const SUPERVISOR_LOG = "/tmp/i7_supervisor.log";
+const RUNNER_LOG = "/tmp/i7_runner.log";
 const DBG_DIR = "/tmp/i7dbg";
 const JSONL_LOG = join(COPILOT_DIR, "data/copilot.log.jsonl");
 const DB_PATH = join(COPILOT_DIR, "data/copilot.sqlite");
+const DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
+const VENV_PYTHON = join(REPO_ROOT, ".venv/bin/python");
+const PYTHON_BIN = existsSync(VENV_PYTHON) ? VENV_PYTHON : "python3";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -158,8 +162,8 @@ const ALLOWED_COMMAND = new RegExp(
       "date\\b.*",
       "df\\b.*",
       "sips\\b.*",
-      "python3?\\s+tools/driver\\.py\\s+info",
-      "python3?\\s+tools/driver\\.py\\s+shot\\b.*", // shot は /tmp/i7dbg への書き込みのみ許可
+      "(?:\\.venv/bin/python|python3?)\\s+tools/driver\\.py\\s+info",
+      "(?:\\.venv/bin/python|python3?)\\s+tools/driver\\.py\\s+shot\\b.*", // shot は /tmp/i7dbg への書き込みのみ許可
       "sleep\\s+\\d+",
     ].join("|") +
     ")$",
@@ -171,25 +175,30 @@ const CopilotTools = defineExtension({
     defineTool({
       name: "check_status",
       description:
-        "周回システムの一括状態確認。autolive/supervise プロセスの生存、ミラーリングウィンドウ、" +
-        "/tmp/i7_autorun.log 末尾40行、通算クリア数、警告痕跡を返す。毎サイクル最初に呼ぶこと。",
+        "周回システムの一括状態確認。run_until/supervise/autolive プロセスの生存、ミラーリングウィンドウ、" +
+        "/tmp/i7_autorun.log 末尾40行、/tmp/i7_runner.log 末尾15行、通算クリア数、警告痕跡を返す。毎サイクル最初に呼ぶこと。",
       parameters: obj({}),
       replay: "safe",
       async execute(_args, _api, _ctx) {
-        const [pgrepAuto, pgrepSup, driverInfo] = await Promise.all([
-          sh("pgrep", ["-fl", "autolive\\.py"]),
+        const [pgrepRunner, pgrepSup, pgrepAuto, driverInfo] = await Promise.all([
+          sh("pgrep", ["-fl", "tools/ops/run_until\\.sh"]),
           sh("pgrep", ["-fl", "supervise_autolive"]),
-          sh("python3", ["tools/driver.py", "info"], { timeoutMs: 10_000 }),
+          sh("pgrep", ["-fl", "autolive\\.py"]),
+          sh(PYTHON_BIN, ["tools/driver.py", "info"], { timeoutMs: 10_000 }),
         ]);
         const autorun = tailLines(AUTORUN_LOG, 40);
         const supervisor = tailLines(SUPERVISOR_LOG, 15);
+        const runner = tailLines(RUNNER_LOG, 15);
         const warns = (autorun.match(/\[(warn|error|停止|停止理由)/g) ?? []).slice(-8);
         const report = [
           "## processes",
-          `autolive.py: ${pgrepAuto.ok && pgrepAuto.stdout.trim() ? pgrepAuto.stdout.trim() : "(not running)"}`,
+          `run_until.sh: ${pgrepRunner.ok && pgrepRunner.stdout.trim() ? pgrepRunner.stdout.trim() : "(not running)"}`,
           `supervise_autolive: ${pgrepSup.ok && pgrepSup.stdout.trim() ? pgrepSup.stdout.trim() : "(not running)"}`,
+          `autolive.py: ${pgrepAuto.ok && pgrepAuto.stdout.trim() ? pgrepAuto.stdout.trim() : "(not running)"}`,
           "## driver.py info",
           driverInfo.ok ? driverInfo.stdout.trim() || "(no output)" : `(failed: ${driverInfo.stderr.trim()})`,
+          `## /tmp/i7_runner.log (last 15 lines)`,
+          runner,
           `## /tmp/i7_autorun.log (last 40 lines, clears=${clearCount(autorun)})`,
           autorun,
           `## /tmp/i7_supervisor.log (last 15 lines)`,
@@ -204,7 +213,7 @@ const CopilotTools = defineExtension({
     defineTool({
       name: "read_log",
       description:
-        "ログファイルを読む。path は /tmp/i7_autorun.log か /tmp/i7_supervisor.log。" +
+        "ログファイルを読む。path は /tmp/i7_autorun.log・/tmp/i7_supervisor.log・/tmp/i7_runner.log のいずれか。" +
         "grep を指定すると一致行と前後 context 行、なければ末尾 lines 行を返す。",
       parameters: obj({
         path: str({ description: "ログファイルのパス" }),
@@ -215,8 +224,9 @@ const CopilotTools = defineExtension({
       replay: "safe",
       async execute(args, _api, _ctx) {
         const path = args.path;
-        if (![AUTORUN_LOG, SUPERVISOR_LOG].includes(path)) {
-          return { output: [{ type: "text", text: `read_log: 許可されたのは ${AUTORUN_LOG} と ${SUPERVISOR_LOG} のみ` }], isError: true };
+        const allowed = [AUTORUN_LOG, SUPERVISOR_LOG, RUNNER_LOG];
+        if (!allowed.includes(path)) {
+          return { output: [{ type: "text", text: `read_log: 許可されたのは ${allowed.join(", ")} のみ` }], isError: true };
         }
         if (!existsSync(path)) return { output: [{ type: "text", text: `(no such file: ${path})` }] };
         if (args.grep) {
@@ -303,15 +313,29 @@ const CopilotTools = defineExtension({
     defineTool({
       name: "restart_supervisor",
       description:
-        "supervise_autolive.sh を nohup で再始動する。autolive と supervisor が両方死んでいるときだけ使用。" +
-        "target_epoch はタスク入力の値（省略時は現在+2時間）。",
+        "最上位の run_until.sh を nohup で再始動する（プロセス所有権の一本化規則に従い、" +
+        "supervise_autolive.sh は直接叩かず run_until.sh 経由で --keep-selection 付きで起動する）。" +
+        "run_until / supervise_autolive / autolive がすべて死んでいるときだけ使用。",
       parameters: obj({ target_epoch: opt(int({ description: "終了 UNIX 時刻（秒）" })) }),
       async execute(args, _api, _ctx) {
+        const alive = await sh("pgrep", [
+          "-fl",
+          "tools/ops/run_until\\.sh|tools/ops/supervise_autolive\\.sh|tools/autolive\\.py",
+        ]);
+        if (alive.ok && alive.stdout.trim()) {
+          return {
+            output: [{
+              type: "text",
+              text: `restart_supervisor: 周回プロセスが既に生存しているため二重起動を拒否しました:\n${alive.stdout.trim()}`,
+            }],
+            isError: true,
+          };
+        }
         const epoch = args.target_epoch ?? Math.floor(Date.now() / 1000) + 7200;
-        const cmd = `nohup tools/ops/supervise_autolive.sh ${epoch} >> /tmp/i7_supervisor.log 2>&1 &`;
+        const cmd = `I7_TAP_EXTRA="--keep-selection" nohup tools/ops/run_until.sh ${epoch} > /dev/null 2>&1 &`;
         const r = await shText(cmd);
         return {
-          output: [{ type: "text", text: r.ok ? `restart_supervisor: target=${epoch} で起動しました` : `restart_supervisor failed: ${r.stderr}` }],
+          output: [{ type: "text", text: r.ok ? `restart_supervisor: run_until.sh を target=${epoch} (--keep-selection) で起動しました` : `restart_supervisor failed: ${r.stderr}` }],
           isError: !r.ok,
         };
       },
@@ -409,6 +433,7 @@ const SupervisorTask = defineTask(
           end: shouldEnd,
           interrupted,
         };
+        mkdirSync(dirname(JSONL_LOG), { recursive: true });
         appendFileSync(JSONL_LOG, JSON.stringify(record) + "\n");
         console.log(`[copilot] cycle ${cycle + 1}: ${reportText || `(no answer: ${settled.status})`}`);
 
@@ -482,6 +507,7 @@ function splitModelRef(ref) {
 // ハーネス構築
 // ---------------------------------------------------------------------------
 async function openHarness({ dbPath, faux }) {
+  mkdirSync(dirname(dbPath), { recursive: true });
   const storage = await openNodeSqliteStorage(dbPath);
   const registry = createRegistry();
   registry.install(CopilotTools);
@@ -519,7 +545,7 @@ async function cmdWatch(args) {
   const faux = Boolean(args.faux);
   const modelRef = faux
     ? { provider: "faux", modelId: "faux-1" }
-    : splitModelRef(args.model ?? process.env.I7_COPILOT_MODEL ?? "anthropic/claude-sonnet-4-6");
+    : splitModelRef(args.model ?? process.env.I7_COPILOT_MODEL ?? DEFAULT_MODEL);
   const dbPath = args.db ?? DB_PATH;
 
   const prompt = readFileSync(PROMPT_PATH, "utf8");
@@ -572,7 +598,7 @@ async function cmdOnce(args) {
   const faux = Boolean(args.faux);
   const modelRef = faux
     ? { provider: "faux", modelId: "faux-1" }
-    : splitModelRef(args.model ?? process.env.I7_COPILOT_MODEL ?? "anthropic/claude-sonnet-4-5");
+    : splitModelRef(args.model ?? process.env.I7_COPILOT_MODEL ?? DEFAULT_MODEL);
   const dbPath = args.db ?? join(COPILOT_DIR, `data/once-${Date.now()}.sqlite`);
   const prompt = readFileSync(PROMPT_PATH, "utf8");
   const { harness } = await openHarness({ dbPath, faux });

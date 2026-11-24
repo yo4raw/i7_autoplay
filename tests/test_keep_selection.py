@@ -1,17 +1,9 @@
-"""`--keep-selection`（現行運用。2026-10-20 ユーザー指定）の回帰テスト（実機不要）。
+"""`--keep-selection`（現行運用の既定。2026-10-20 ユーザー指定）の回帰テスト（実機不要）。
 
-このフラグの要点は **「立てたら楽曲選択で何も選び直さない」** の一点に尽きる。
-CLAUDE.md 絶対規則 2「難易度は人が選んだものをそのまま継続する」はこのフラグで守られる。
-既定経路（旧運用）は従来どおり Don't Analyze Me + EASY を固定する。
-
-ここが壊れると静かに事故る:
-
-- フラグを立てたのに EASY 固定タップが残っていると、人が EXPERT 等に合わせた難易度を
-  **黙って EASY へ戻す**（絶対規則 2 違反）。ログには何も出ないので気づけない。
-- 逆に既定経路から EASY 固定が消えると、旧運用を明示的に選んだ人の前提が崩れる。
-
-`_loop()` は実機前提で単体実行できないため、`test_screen_flow_doc.py` と同じく
-ソースの分岐構造を機械的に突き合わせる。
+CLAUDE.md 絶対規則 2「難易度は人が選んだものをそのまま継続する」を既定値で守る:
+- `AutoLive` および CLI の既定は `keep_selection=True`（曲も難易度も一切タップしない）。
+- 旧運用（Don't Analyze Me + EASY 固定）は `--no-keep-selection` 指定時のみ有効。
+- 互換性のため `--keep-selection` フラグ自体も引き続き受け付ける。
 """
 import inspect
 import os
@@ -37,14 +29,14 @@ def songselect_block():
                  if l.strip() == 'elif state == "songselect":')
     indent = len(lines[start]) - len(lines[start].lstrip())
     for i in range(start + 1, len(lines)):
-        l = lines[i]
-        if l.strip() and (len(l) - len(l.lstrip())) <= indent:
+        ln = lines[i]
+        if ln.strip() and (len(ln) - len(ln.lstrip())) <= indent:
             return lines[start:i]
     raise AssertionError("songselect ブロックの終端が見つからない")
 
 
 def branch_split():
-    """(keep_selection 側の行, 既定側の行) に割る。"""
+    """(keep_selection 側の行, 旧運用側の行) に割る。"""
     block = songselect_block()
     i_if = next(i for i, l in enumerate(block)
                 if l.strip() == "if self.keep_selection:")
@@ -56,16 +48,17 @@ def branch_split():
 
 
 class TestWiring(unittest.TestCase):
-    def test_flag_defaults_to_off(self):
-        """既定は累計イベントの従来挙動（Don't Analyze Me + EASY）。"""
+    def test_flag_defaults_to_on(self):
+        """既定は人が選んだ曲・難易度を維持する（CLAUDE.md 絶対規則 2）。"""
         sig = inspect.signature(AL.AutoLive.__init__)
         self.assertIn("keep_selection", sig.parameters)
-        self.assertIs(False, sig.parameters["keep_selection"].default,
-                      "既定で選択をスキップすると累計イベントで難易度が固定されない")
+        self.assertIs(True, sig.parameters["keep_selection"].default,
+                      "既定が True でないと人が選んだ難易度を EASY に戻してしまう")
 
-    def test_cli_flag_exists_and_is_wired(self):
+    def test_cli_flags_exist_and_are_wired(self):
         src = read(AUTOLIVE)
-        self.assertIn('"--keep-selection"', src, "CLI フラグが無い")
+        self.assertIn('"--keep-selection"', src, "CLI フラグ --keep-selection が無い")
+        self.assertIn('"--no-keep-selection"', src, "CLI フラグ --no-keep-selection が無い")
         self.assertIn("keep_selection=args.keep_selection", src,
                       "CLI フラグが AutoLive に配線されていない")
 
@@ -75,34 +68,34 @@ class TestWiring(unittest.TestCase):
 
 class TestBranchBehaviour(unittest.TestCase):
     def test_keep_selection_branch_taps_nothing(self):
-        """フラグ側の枝では、曲も難易度も**一切クリックしない**。"""
+        """keep_selection 側の枝では、曲も難易度も**一切クリックしない**。"""
         keep, _ = branch_split()
-        offenders = [l.strip() for l in keep if "click" in l]
+        offenders = [ln.strip() for ln in keep if "click" in ln]
         self.assertEqual([], offenders,
                          f"--keep-selection なのにクリックしている: {offenders}")
 
-    def test_easy_tab_only_in_default_branch(self):
-        """EASY 固定タップは既定側の枝にしか無いこと。"""
-        keep, default = branch_split()
-        self.assertFalse(any("P_EASY_TAB" in l for l in keep),
+    def test_easy_tab_only_in_legacy_branch(self):
+        """EASY 固定タップは旧運用側（--no-keep-selection）の枝にしか無いこと。"""
+        keep, legacy = branch_split()
+        self.assertFalse(any("P_EASY_TAB" in ln for ln in keep),
                          "--keep-selection で難易度を上書きしている")
-        self.assertTrue(any("P_EASY_TAB" in l for l in default),
-                        "既定から EASY 固定が消えた（絶対規則 2 違反）")
+        self.assertTrue(any("P_EASY_TAB" in ln for ln in legacy),
+                        "旧運用枝から EASY 固定が消えた")
 
-    def test_song_template_only_in_default_branch(self):
-        """曲の自動選択も既定側の枝にしか無いこと。"""
-        keep, default = branch_split()
-        self.assertFalse(any("songdaz" in l for l in keep),
+    def test_song_template_only_in_legacy_branch(self):
+        """曲の自動選択も旧運用側の枝にしか無いこと。"""
+        keep, legacy = branch_split()
+        self.assertFalse(any("songdaz" in ln for ln in keep),
                          "--keep-selection で曲を選び直している")
-        self.assertTrue(any("songdaz" in l for l in default),
-                        "既定から対象曲の自動選択が消えた")
+        self.assertTrue(any("songdaz" in ln for ln in legacy),
+                        "旧運用枝から対象曲の自動選択が消えた")
 
     def test_next_is_pressed_in_both_branches(self):
         """どちらの枝でも最後に NEXT は押す（押さないと周回が進まない）。"""
         block = songselect_block()
-        tail = [l for l in block
-                if 'click_match(res["songselect"]' in l
-                and (len(l) - len(l.lstrip())) == 16]
+        tail = [ln for ln in block
+                if 'click_match(res["songselect"]' in ln
+                and (len(ln) - len(ln.lstrip())) == 16]
         self.assertEqual(1, len(tail),
                          "NEXT が枝の外に1つある形になっていない")
 

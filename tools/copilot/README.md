@@ -10,7 +10,7 @@ Python が行い、こちらは外側の見張りだけを担う。
 | ファイル | 役割 |
 |---|---|
 | `src/supervisor.mjs` | エントリポイント。`watch`（常駐監視）と `once`（1サイクル確認）の2モード |
-| `bin/watch.sh` | `supervise_autolive.sh` と並走させる常駐ラッパー |
+| `bin/watch.sh` | `run_until.sh` と並走させる常駐ラッパー |
 | `bin/once.sh` | 1サイクルだけ実行して終了（動作確認用） |
 | `data/copilot.sqlite` | pi-durable の SQLite ストレージ（会話・タスク状態。`.gitignore` 済み） |
 | `data/copilot.log.jsonl` | サイクルごとの報告ログ（1行JSON） |
@@ -28,7 +28,7 @@ Python が行い、こちらは外側の見張りだけを担う。
 - プロセスが落ちても SQLite にコミット済みの状態から再開する。`watch` を再実行すれば
   既存タスクを見つけて続きを回す（`requestId` で二重 submit しない）。
 - 介入系ツールは `open_mirroring`（ScreenContinuity 起動）と
-  `restart_supervisor`（`supervise_autolive.sh` 再始動）のみ。それ以外の副作用操作は
+  `restart_supervisor`（`run_until.sh` 経由の再始動。プロセス生存時は二重起動を拒否）のみ。それ以外の副作用操作は
   `run_command` の許可リストで拒否する。
 - `end_session` または目標時刻（`--target`）超過でタスクは terminal になり `watch` が終了する。
 
@@ -37,11 +37,11 @@ Python が行い、こちらは外側の見張りだけを担う。
 ```bash
 cd tools/copilot && npm install
 
-# 常駐監視（supervise_autolive.sh と併走。target_epoch は周回の終了時刻）
+# 常駐監視（run_until.sh と併走。target_epoch は周回の終了時刻）
 tools/copilot/bin/watch.sh $(( $(date +%s) + 7200 )) 600 anthropic/claude-sonnet-4-6
 
 # 1サイクルだけ確認（APIキー必要）
-tools/copilot/bin/once.sh anthropic/claude-sonnet-4-5
+tools/copilot/bin/once.sh anthropic/claude-sonnet-4-6
 
 # APIキーなしのオフライン疎通（faux プロバイダ）
 tools/copilot/bin/once.sh --faux
@@ -53,7 +53,7 @@ node src/supervisor.mjs watch --target $(( $(date +%s) + 3600 )) --faux --first-
 
 ## 周回側との関係
 
-- copilot は `pgrep`/`tail`/`driver.py info`/`open -b`/`nohup supervise_autolive.sh` しか
+- copilot は `pgrep`/`tail`/`.venv/bin/python tools/driver.py info`/`open -b`/`nohup run_until.sh` しか
   触らない。**ライブ中のタップ・クリック・Mac 入力には一切関与しない**ので、
   PAUSE を誘発する副作用は従来の Claude Code /loop と同じ範囲に留まる。
 - 判断に迷う症状は `end_session` で人間に委ねる設計（`supervisor_loop.md` の

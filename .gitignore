@@ -22,8 +22,9 @@ venv/
 # 緑ノーツの実機フレーム。取得手順は docs/superpowers/specs/2026-08-04-green-hold-design.md
 /tests/frames_green/
 
-# 円自動キャリブレーションの結果キャッシュ（端末ごとの実測値。再起動時の即時復元用）
+# 円自動キャリブレーション・LIFEコストの結果キャッシュ（端末・イベントごとの実測値。再起動時の即時復元用）
 /.autocal_circles.json
+/.life_cost_cache.json
 
 # ローカル LLM モデル（GGUF。数GB単位）
 /data/models/

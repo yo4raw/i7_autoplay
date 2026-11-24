@@ -1,0 +1,24 @@
+[project]
+name = "i7-autoplay"
+version = "0.20.0"
+description = "macOS iPhone Mirroring automation for IDOLiSH7 event live loops"
+requires-python = ">=3.11"
+dependencies = [
+    "mss>=10.2.0",
+    "numpy>=2.0.0",
+    "opencv-python>=4.10.0",
+    "Pillow>=11.0.0",
+    "pyobjc-core>=12.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=12.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=12.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Vision>=12.0; sys_platform == 'darwin'",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["tools", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E402", "E501", "E701", "E702", "E731"]

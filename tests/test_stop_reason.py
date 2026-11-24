@@ -24,6 +24,11 @@ AUTOLIVE = os.path.join(ROOT, "tools", "autolive.py")
 SUPERVISOR = os.path.join(ROOT, "tools", "ops", "supervise_autolive.sh")
 
 
+def _read(path):
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
 class TestExitCodes(unittest.TestCase):
     def test_safe_stop_code_is_distinct(self):
         self.assertEqual(0, AL.EXIT_OK)
@@ -33,7 +38,7 @@ class TestExitCodes(unittest.TestCase):
 
     def test_main_exits_with_safe_stop_code(self):
         """main() が stop_reason を終了コードへ変換していること。"""
-        src = open(AUTOLIVE, encoding="utf-8").read()
+        src = _read(AUTOLIVE)
         self.assertIn("sys.exit(EXIT_SAFE_STOP if reason else EXIT_OK)", src)
 
 
@@ -44,7 +49,7 @@ class TestEverySafetyStopSetsReason(unittest.TestCase):
     """
 
     def test_all_warn_breaks_have_reason(self):
-        lines = open(AUTOLIVE, encoding="utf-8").read().split("\n")
+        lines = _read(AUTOLIVE).split("\n")
         missing = []
         for i, ln in enumerate(lines):
             if ln.strip() != "break":
@@ -59,7 +64,7 @@ class TestEverySafetyStopSetsReason(unittest.TestCase):
                          f"stop_reason を立てずに安全停止している行: {missing}")
 
     def test_reasons_are_unique_and_descriptive(self):
-        src = open(AUTOLIVE, encoding="utf-8").read()
+        src = _read(AUTOLIVE)
         reasons = re.findall(r'self\.stop_reason = "([a-z_]+)"', src)
         self.assertGreaterEqual(len(reasons), 8, "安全停止の理由が想定より少ない")
         self.assertEqual(len(reasons), len(set(reasons)),
@@ -68,7 +73,7 @@ class TestEverySafetyStopSetsReason(unittest.TestCase):
 
 class TestSupervisorRespectsSafeStop(unittest.TestCase):
     def test_supervisor_breaks_on_safe_stop_code(self):
-        src = open(SUPERVISOR, encoding="utf-8").read()
+        src = _read(SUPERVISOR)
         self.assertIn("rc == 42", src, "supervisor が安全停止コードを見ていない")
         # rc==42 の分岐内で break していること
         # ※ `fi` は行として現れるものだけを終端とみなす（`_fired` などに誤マッチさせない）
@@ -80,7 +85,7 @@ class TestSupervisorRespectsSafeStop(unittest.TestCase):
 
     def test_supervisor_has_barren_circuit_breaker(self):
         """クリアが増えないまま終了が続いたら諦めること（空転の安全網）。"""
-        src = open(SUPERVISOR, encoding="utf-8").read()
+        src = _read(SUPERVISOR)
         self.assertIn("barren", src)
         self.assertRegex(src, r"barren >= \d+", "空転の打ち切り条件が無い")
 
@@ -92,7 +97,7 @@ class TestSupervisorRespectsSafeStop(unittest.TestCase):
 class TestStopReasonInitialised(unittest.TestCase):
     def test_attribute_initialised_to_none(self):
         """__init__ で None に初期化されていること（未設定だと AttributeError で落ちる）。"""
-        src = open(AUTOLIVE, encoding="utf-8").read()
+        src = _read(AUTOLIVE)
         tree = ast.parse(src)
         found = False
         for node in ast.walk(tree):
@@ -131,7 +136,7 @@ class TestSongselectNoChangeGuard(unittest.TestCase):
     """
 
     def test_guard_exists_and_stops(self):
-        src = open(AUTOLIVE, encoding="utf-8").read()
+        src = _read(AUTOLIVE)
         self.assertIn("SONGSELECT_NOCHANGE_MAX", src)
         self.assertIn("songsel_nochg += 1", src)
         self.assertIn('"songselect_stuck"', src)
@@ -152,7 +157,7 @@ class TestLiveAbandonedGuard(unittest.TestCase):
     """
 
     def formation_block(self):
-        lines = open(AUTOLIVE, encoding="utf-8").read().split("\n")
+        lines = _read(AUTOLIVE).split("\n")
         start = next(i for i, l in enumerate(lines)
                      if l.strip() == 'elif state == "formation":')
         indent = len(lines[start]) - len(lines[start].lstrip())
@@ -172,7 +177,7 @@ class TestLiveAbandonedGuard(unittest.TestCase):
 
     def test_counter_resets_on_every_clear(self):
         """クリア計上（was_in_live を下ろす箇所）すべてでカウンタを戻すこと。"""
-        src = open(AUTOLIVE, encoding="utf-8").read()
+        src = _read(AUTOLIVE)
         n_clear = src.count("                    self.was_in_live = False")
         n_reset = src.count("                    self.starts_since_clear = 0")
         self.assertGreaterEqual(n_clear, 3)
@@ -191,7 +196,7 @@ class TestTimeLimitNotMidLive(unittest.TestCase):
     """
 
     def test_time_limit_check_is_after_detect_and_skips_gameplay(self):
-        src = open(AUTOLIVE, encoding="utf-8").read()
+        src = _read(AUTOLIVE)
         body = src[src.index("    def _loop(self):"):src.index("\ndef calibrate(")]
         i_detect = body.index("state, res = self.detect(frame)")
         i_limit = body.index("時間上限に到達")

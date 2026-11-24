@@ -107,25 +107,20 @@ class ScoreTracker:
 
 def collect(duration, out_dir):
     os.makedirs(out_dir, exist_ok=True)
-    al = autolive.AutoLive.__new__(autolive.AutoLive)
-    al.templates = autolive.load_templates()
-    al.win = driver.find_window()
-    al.content = (38, int(al.win["h"]) - 9)
-    al.verbose = False
-    al._last_dark_check = 0.0
+    win = driver.find_window()
     n = len([f for f in os.listdir(out_dir) if f.endswith(".png") and f[0].isdigit()])
     t0 = time.time()
     tracker = ScoreTracker()
     print(f"result_log start dur={duration}s out={out_dir} (既存{n}件)", flush=True)
     while time.time() - t0 < duration:
         try:
-            frame = driver.grab(al.win)
+            frame = driver.grab(win)
             score = score_screen_score(frame)
         except Exception as e:      # 切断・ウィンドウ消失などは致命ではない
             print(f"[warn] {e}", flush=True)
             time.sleep(3.0)
             try:
-                al.win = driver.find_window()
+                win = driver.find_window()
             except Exception:
                 pass
             continue

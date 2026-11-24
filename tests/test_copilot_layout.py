@@ -1,11 +1,19 @@
 """tools/copilot（pi-durable 監視エージェント）の構成回帰テスト（実機・APIキー不要）。"""
 import json
 import os
+import shutil
 import subprocess
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COPILOT = os.path.join(ROOT, "tools", "copilot")
+
+
+def _find_node():
+    search_path = os.pathsep.join(
+        filter(None, [os.environ.get("PATH", ""), "/opt/homebrew/bin", "/usr/local/bin"])
+    )
+    return shutil.which("node", path=search_path)
 
 
 class TestCopilotLayout(unittest.TestCase):
@@ -21,7 +29,7 @@ class TestCopilotLayout(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(COPILOT, rel)), rel)
 
     def test_package_json(self):
-        with open(os.path.join(COPILOT, "package.json")) as f:
+        with open(os.path.join(COPILOT, "package.json"), encoding="utf-8") as f:
             pkg = json.load(f)
         self.assertEqual("module", pkg.get("type"))
         deps = pkg.get("dependencies", {})
@@ -35,17 +43,20 @@ class TestCopilotLayout(unittest.TestCase):
             self.assertEqual(r.returncode, 0, f"{name}: {r.stderr}")
 
     def test_supervisor_mjs_parses(self):
+        node_bin = _find_node()
+        if not node_bin:
+            self.skipTest("node 未導入")
         if not os.path.isdir(os.path.join(COPILOT, "node_modules")):
             self.skipTest("node_modules 未導入（cd tools/copilot && npm install）")
         r = subprocess.run(
-            ["node", "--check", os.path.join(COPILOT, "src", "supervisor.mjs")],
+            [node_bin, "--check", os.path.join(COPILOT, "src", "supervisor.mjs")],
             capture_output=True, text=True,
         )
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_prompt_is_ported_decision_table(self):
         """pi_durable_copilot.md が supervisor_loop.md の判断表を引き継いでいること。"""
-        with open(os.path.join(ROOT, "assets/prompts/pi_durable_copilot.md")) as f:
+        with open(os.path.join(ROOT, "assets/prompts/pi_durable_copilot.md"), encoding="utf-8") as f:
             text = f.read()
         for marker in ("きなこパン", "ステラ", "check_status", "end_session", "open_mirroring", "restart_supervisor"):
             self.assertIn(marker, text)

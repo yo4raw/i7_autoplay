@@ -37,19 +37,35 @@ ask() {   # ask <プロンプト> → 1行読んで REPLY_LINE に入れる。EO
   IFS= read -r REPLY_LINE || usage_and_exit
 }
 
-interactive_setup() {
-  # **多重起動ガード。** 2プロセスが同じ画面を叩き合うと制御を失う。
-  # docs/operations.md の起動前チェック A-1 を機械化したもの（ops スクリプトには
-  # 従来これが無く、人間の目視に頼っていた）。
-  local dup others
+LOCK_FILE="${I7_LOCK_FILE:-/tmp/i7_runner.pid}"
+
+check_no_duplicate() {
+  # **多重起動ガード（対話モード・引数付き起動の両方で共通実行）。**
+  # 2プロセスが同じ画面を叩き合うと制御を失うため、PID ロックと pgrep の二重で確認する。
+  if [[ -f "$LOCK_FILE" ]]; then
+    local locked_pid
+    locked_pid=$(cat "$LOCK_FILE" 2>/dev/null)
+    if [[ -n "$locked_pid" && "$locked_pid" != "$$" && "$locked_pid" != "${I7_SPAWNED_BY_PID:-}" ]] \
+       && kill -0 "$locked_pid" 2>/dev/null; then
+      echo "既に周回プロセスが動いています (lock pid: $locked_pid)" >&2
+      echo "先に止めてください:" >&2
+      echo "  pkill -f run_until; pkill -f supervise_autolive; pkill -f tools/autolive" >&2
+      exit 2
+    fi
+  fi
+  local dup others exclude_re="^(${$}|${PPID}|${I7_SPAWNED_BY_PID:-0})\$"
   dup=$(pgrep -f 'tools/ops/supervise_autolive\.sh|tools/autolive\.py' 2>/dev/null)
-  others=$(pgrep -f 'tools/ops/run_until\.sh' 2>/dev/null | grep -v "^$$\$")
+  others=$(pgrep -f 'tools/ops/run_until\.sh' 2>/dev/null | grep -Ev "$exclude_re")
   if [[ -n "${dup}${others}" ]]; then
     echo "既に周回プロセスが動いています (pid: ${dup//$'\n'/ } ${others//$'\n'/ })" >&2
     echo "先に止めてください:" >&2
     echo "  pkill -f run_until; pkill -f supervise_autolive; pkill -f tools/autolive" >&2
     exit 2
   fi
+}
+
+interactive_setup() {
+  check_no_duplicate
 
   cat >&2 <<'CHECK'
 起動前の確認（毎回）:
@@ -105,7 +121,7 @@ SUMMARY
   # I7_TAP_OPTS を組み立てると既定が2箇所に散って片方だけ古くなるので、
   # **追記用の I7_TAP_EXTRA だけを渡す**（既定の真実の情報源は1つのまま）。
   export I7_TAP_EXTRA="$extra"
-  nohup "$SELF" "$target" > /dev/null 2>&1 &
+  I7_SPAWNED_BY_PID="$$" nohup "$SELF" "$target" > /dev/null 2>&1 &
   echo "バックグラウンドで起動しました (pid $!)" >&2
   echo "  進行を見る : tail -f /tmp/i7_autorun.log" >&2
   echo "  止める     : pkill -f run_until; pkill -f supervise_autolive;" >&2
@@ -116,6 +132,9 @@ SUMMARY
 (( $# == 0 )) && interactive_setup
 
 TARGET="${1:?usage: run_until.sh <target_epoch>}"
+check_no_duplicate
+echo "$$" > "$LOCK_FILE"
+trap '[[ "$(cat "$LOCK_FILE" 2>/dev/null)" == "$$" ]] && rm -f "$LOCK_FILE"' EXIT INT TERM
 # パスは環境変数で差し替え可能にする（テストが本番のログ・フラグを壊さないため）。
 LOG="${I7_RUNNER_LOG:-/tmp/i7_runner.log}"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
@@ -159,12 +178,7 @@ try:
     # 切断中は縦長のダイアログ（幅 < 高さ）。ゲームは横向き。
     if win["w"] < win["h"]:
         sys.exit(1)
-    al = autolive.AutoLive.__new__(autolive.AutoLive)
-    al.templates = autolive.load_templates()
-    al.win = win
-    al.content = (38, int(win["h"]) - 9)
-    al.verbose = False
-    al._last_dark_check = 0.0
+    al = autolive.AutoLive.headless(win=win)
     frame = driver.grab(win)
     state, _ = al.detect(frame)
     if state == "menu":
@@ -243,7 +257,7 @@ while :; do
         waiting=4
       fi
     fi
-    sleep 30
+    sleep "${I7_RUNNER_SLEEP:-30}"
   fi
 done
 log "runner done"

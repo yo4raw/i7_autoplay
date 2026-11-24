@@ -17,10 +17,12 @@ import autolive as AL  # noqa: E402
 import test_life_recover_safety as LRS  # noqa: E402  # _FakeLive 等を再利用
 
 FRAMES = os.path.join(os.path.dirname(__file__), "frames")
+_TEMPLATES = AL.load_templates()
 
 
 def load_rgb(name):
-    return np.array(Image.open(os.path.join(FRAMES, name)).convert("RGB"))
+    with Image.open(os.path.join(FRAMES, name)) as im:
+        return np.array(im.convert("RGB"))
 
 
 def load(name):
@@ -30,13 +32,11 @@ def load(name):
 
 def detect_file(name):
     """実機接続なしで detect() だけを走らせる。"""
-    frame = np.array(Image.open(os.path.join(FRAMES, name)).convert("RGB"))
-    al = AL.AutoLive.__new__(AL.AutoLive)
-    al.templates = AL.load_templates()
-    al.content = (38, frame.shape[0] - 9)
-    al.win = {"x": 0, "y": 0, "w": frame.shape[1], "h": frame.shape[0]}
-    al.verbose = False
-    al._last_dark_check = 0.0
+    frame = load_rgb(name)
+    al = AL.AutoLive.headless(
+        win={"x": 0, "y": 0, "w": frame.shape[1], "h": frame.shape[0]},
+        templates=_TEMPLATES,
+    )
     return al.detect(frame)
 
 
@@ -121,8 +121,9 @@ class TestExpResultScreen(unittest.TestCase):
         if not files:
             self.skipTest("実フレームコーパスなし（任意）")
         for p in files:
-            f = cv2.cvtColor(np.array(Image.open(p).convert("RGB")),
-                             cv2.COLOR_RGB2BGR)
+            with Image.open(p) as im:
+                f = cv2.cvtColor(np.array(im.convert("RGB")),
+                                 cv2.COLOR_RGB2BGR)
             worst = max(worst, AL.match_best(f, imgs)[0])
         self.assertLess(worst, thr, f"本物のポップアップ等で誤検出 (max={worst:.3f})")
 
@@ -202,7 +203,7 @@ class TestDarkThemeEventResult(unittest.TestCase):
         self.assertEqual("eventresult", state, res.get("eventresult"))
         # 生の平均輝度は 57（暗い側）。frame_brightness() では上端 38 行の置換で 77 になり
         # 明るい側の通常照合でも当たる。どちらの経路でも eventresult になることが要件。
-        fr = np.array(Image.open(os.path.join(FRAMES, "eventresult_dark_671x348.png")).convert("RGB"))
+        fr = load_rgb("eventresult_dark_671x348.png")
         self.assertLess(float(fr.mean()), AL.DARK_THRESH, "生の平均が暗くなければ回帰テストにならない")
 
 
@@ -214,7 +215,7 @@ class TestBrightnessIgnoresTopStrip(unittest.TestCase):
     """
 
     def _frame(self, strip=None):
-        fr = np.array(Image.open(os.path.join(FRAMES, "gameplay_dis_one_671x348.png")).convert("RGB")).copy()
+        fr = load_rgb("gameplay_dis_one_671x348.png").copy()
         if strip is not None:
             fr[:30] = strip
         return fr
@@ -242,8 +243,9 @@ class TestContentRectIsFixed(unittest.TestCase):
     """
 
     def test_no_dynamic_content_rect(self):
-        src = open(os.path.join(os.path.dirname(__file__), "..", "tools", "autolive.py"),
-                   encoding="utf-8").read()
+        with open(os.path.join(os.path.dirname(__file__), "..", "tools", "autolive.py"),
+                  encoding="utf-8") as fh:
+            src = fh.read()
         self.assertNotIn("detect_content_rect", src)
         self.assertNotIn("self.content = rect", src)
         self.assertEqual(38, AL.TITLEBAR_ROWS)
@@ -267,13 +269,12 @@ class TestDimLiveFrameIsGameplay(unittest.TestCase):
             AL.CIRCLES[:] = saved
 
     def test_dim_live_frame_with_rings_is_gameplay(self):
-        fr = np.array(Image.open(os.path.join(FRAMES, "gameplay_dim_671x348.png")).convert("RGB")).copy()
+        fr = load_rgb("gameplay_dim_671x348.png").copy()
         fr[38:] = np.clip(fr[38:].astype(int) + 20, 0, 255).astype(np.uint8)   # 内容を明るくして 65 超に
-        al = AL.AutoLive.__new__(AL.AutoLive)
-        al.templates = AL.load_templates(); al.verbose = False; al._last_dark_check = 0.0
-        al.suppress_cardx_until = 0.0
-        al.win = {"x": 0, "y": 0, "w": fr.shape[1], "h": fr.shape[0]}
-        al.content = (AL.TITLEBAR_ROWS, fr.shape[0] - 9)
+        al = AL.AutoLive.headless(
+            win={"x": 0, "y": 0, "w": fr.shape[1], "h": fr.shape[0]},
+            templates=_TEMPLATES,
+        )
         b = AL.frame_brightness(fr)
         self.assertTrue(AL.DARK_THRESH <= b < AL.DIM_THRESH, f"薄暗い帯のフレームでないと回帰テストにならない: {b}")
         state, _ = self._with_calibrated_circles(lambda: al.detect(fr))
@@ -334,9 +335,7 @@ class TestNormalSongselectBadge(unittest.TestCase):
     """
 
     def _score(self, name):
-        fr = np.array(Image.open(os.path.join(FRAMES, name)).convert("RGB"))
-        import cv2
-        return AL.match_best(cv2.cvtColor(fr, cv2.COLOR_RGB2BGR), AL.load_templates()["eventbadge"][0])[0]
+        return AL.match_best(load(name), _TEMPLATES["eventbadge"][0])[0]
 
     def test_badge_present_on_normal_songselect_and_absent_on_event_songselect(self):
         thr = AL.TEMPLATES["eventbadge"][1]
@@ -344,16 +343,14 @@ class TestNormalSongselectBadge(unittest.TestCase):
         self.assertLess(self._score("songselect_event_671x348.png"), thr)
 
     def test_songselect_handler_checks_badge_before_next(self):
-        src = open(os.path.join(os.path.dirname(__file__), "..", "tools", "autolive.py"), encoding="utf-8").read()
+        with open(os.path.join(os.path.dirname(__file__), "..", "tools", "autolive.py"),
+                  encoding="utf-8") as fh:
+            src = fh.read()
         block = src[src.index('elif state == "songselect":'):src.index('elif state == "friendselect":')]
         self.assertLess(block.index('"eventbadge"'), block.index("if self.keep_selection:"),
                         "バッジ確認は keep_selection 分岐より前で行うこと")
         self.assertLess(block.index('"eventbadge"'), block.index('res["songselect"][2]'),
                         "バッジ確認は NEXT 押下より前で行うこと")
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestDlDialog(unittest.TestCase):
@@ -548,7 +545,7 @@ class TestRecoverLifeShrunkenWindow(unittest.TestCase):
 
     def test_kinako_row_found_and_point_on_656(self):
         """656 の両フレームできなこ行が見つかり、着弾がきなこ行・ステラ行から十分離れる。"""
-        imgs, thr = AL.load_templates()["kinakorow"]
+        imgs, thr = _TEMPLATES["kinakorow"]
         for name in ("lifeshort_kinako_qty1_656x341.png",
                      "lifeshort_kinako_qty3_656x341.png"):
             with self.subTest(frame=name):
@@ -561,4 +558,49 @@ class TestRecoverLifeShrunkenWindow(unittest.TestCase):
                                 f"着弾 ({x:.0f},{y:.0f}) がきなこ「回復」の外")
                 self.assertLess(y, self.STELLA_BUTTON_656[1] - 0.1 * 341,
                                 f"着弾 y={y:.0f} がステラ行に近い")
+
+
+class TestGiveupConfirmDialog(unittest.TestCase):
+    """PAUSE の間引き窓で円1打鍵が「諦める」を踏んだときの確認ダイアログで「キャンセル」を押すこと。
+
+    「諦める」を押すと消費済み LIFE と報酬が丸損になる。左右を取り違えないことと、
+    671x348 の暗いライブ背景上（カットイン猶予中）でも即座に拾えることを固定する。
+    """
+
+    def test_detected_as_giveupconfirm_on_529x334(self):
+        state, res = detect_file("giveup_confirm_529x334.png")
+        self.assertEqual("giveupconfirm", state, f"{state} と誤判定")
+        self.assertGreaterEqual(res["giveupconfirm"][0], res["giveupconfirm"][1])
+
+    def test_detected_during_cutin_grace_on_671x348(self):
+        src_529 = load_rgb("giveup_confirm_529x334.png")
+        dlg = src_529[90:290, 95:435]
+        fr = load_rgb("gameplay_dis_one_671x348.png").copy()
+        y0 = (fr.shape[0] - dlg.shape[0]) // 2
+        x0 = (fr.shape[1] - dlg.shape[1]) // 2
+        fr[y0:y0 + dlg.shape[0], x0:x0 + dlg.shape[1]] = dlg
+        self.assertLess(AL.frame_brightness(fr), AL.DIM_THRESH,
+                        "暗いライブ背景（DIM_THRESH 未満）でないと救済経路の検証にならない")
+        al = AL.AutoLive.headless(
+            win={"x": 0, "y": 0, "w": fr.shape[1], "h": fr.shape[0]},
+            templates=_TEMPLATES,
+        )
+        al._live_confirmed_ts = AL.time.time()   # カットイン猶予中を模擬
+        state, res = al.detect(fr)
+        self.assertEqual("giveupconfirm", state, f"{state} と誤判定")
+        self.assertGreaterEqual(res["giveupconfirm"][0], res["giveupconfirm"][1])
+
+    def test_anchor_lands_on_cancel_not_giveup(self):
+        _, res = detect_file("giveup_confirm_529x334.png")
+        cx, cy = res["giveupconfirm"][2]
+        x = cx + AL.ANCH_GIVEUP_CANCEL[0]
+        y = cy + AL.ANCH_GIVEUP_CANCEL[1]
+        # 実測（529x334）: 左「キャンセル」x=148..243, y=237..277 / 右「諦める」x=293..386
+        self.assertTrue(148 <= x <= 243,
+                        f"x={x:.1f} が「キャンセル」外。「諦める」側なら LIFE 丸損")
+        self.assertTrue(237 <= y <= 277, f"y={y:.1f} がボタン外")
+
+
+if __name__ == "__main__":
+    unittest.main()
 

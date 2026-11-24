@@ -6,9 +6,10 @@
 #   tools/copilot/bin/once.sh [model] [--faux] [--db path]
 #   tools/copilot/bin/once.sh --faux          # モデル省略時は既定値
 set -u
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 cd "$(dirname "$0")/.."
 
-MODEL="${I7_COPILOT_MODEL:-anthropic/claude-sonnet-4-5}"
+MODEL="${I7_COPILOT_MODEL:-anthropic/claude-sonnet-4-6}"
 if [[ -n "${1:-}" && "${1:0:1}" != "-" ]]; then
   MODEL="$1"; shift
 fi

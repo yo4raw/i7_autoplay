@@ -59,7 +59,7 @@ python -u tools/ops/corpus_collector.py 1800    # 30分ぶん採取
 tools/ops/run_until.sh
 ```
 
-自動化から呼ぶときは従来どおり**終了する UNIX 時刻**を引数で渡す（対話は起きない）:
+自動化から呼ぶときは従来どおり**終了する UNIX 時刻**を引数で渡す（対話は起きない。多重起動は自動拒否、曲・難易度は既定で人が選んだまま維持）:
 
 ```bash
 nohup tools/ops/run_until.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &   # 今から2時間
@@ -69,7 +69,7 @@ nohup tools/ops/run_until.sh $(date -j -f '%H:%M:%S' '23:45:00' +%s) > /dev/null
 **無制限で今すぐ回す**（対話メニューの「無期限(30日)」と同じ 30 日。曲は人が選んだまま触らない）:
 
 ```bash
-I7_TAP_EXTRA="--keep-selection" nohup tools/ops/run_until.sh $(( $(date +%s) + 2592000 )) > /dev/null 2>&1 &
+nohup tools/ops/run_until.sh $(( $(date +%s) + 2592000 )) > /dev/null 2>&1 &
 ```
 
 Claude Code では `/run-forever`（`.claude/skills/run-forever/SKILL.md`）が、下の起動前確認を
@@ -226,3 +226,4 @@ AUTO 周回作業を、macOS の **iPhone ミラーリング** 経由で自動�
 | 0.17 | 2026-08-06 | **実機A/Bで打鍵フラグ3件に決着（[device-findings.md](device-findings.md)「実機A/B: ジッター採用・緑ホールド却下・predict 却下」）**。リザルト成績を数値で転記して比較した。**着弾点ジッター=採用（既定ON維持・悪化指標ゼロ）**、**`--green-hold`=採用し supervisor 既定へ投入**（best を前後に挟む交互測定で MISS 中央値 5→4・SCORE +4.5%、MISS≤4 達成率 best 0/37 vs green 24/27）、**`--predict`=却下**（MISS 5.1→55.9）。**`result_log.py` の取得方式のバグを修正**（バースト撮影は12ライブ中8件を取り逃がし、しかも遷移がもたつく＝成績の悪いライブほど落ちる**非ランダムな欠測**で、緑ホールドの採否を一度誤らせた。追跡方式へ変更し ScoreTracker をテスト可能に切り出し）。autolive にライブ品質の自己診断を追加（打鍵<330 で大量MISS、>600 で2ライブ連結を警告）。run_until.sh が **Mac ロックを切断と区別**するようにした（従来は誤った復旧方法を案内して直らない状態を待ち続けていた）|
 | 0.18 | 2026-10-20 | **難易度は人が選んだものをそのまま継続する**運用へ変更（ユーザー指定。CLAUDE.md 絶対規則 2・`--keep-selection` を正とする）。OCR に `pyobjc-framework-Vision` を採用。周回を止めていた原因（ミラーリング窓が 671x348→656x341 に縮みテンプレが閾値割れ）と、きなこパン回復量のイベント差・打鍵ループ約 16 FPS への対処を [`superpowers/specs/2026-10-20-loop-robustness-design.md`](superpowers/specs/2026-10-20-loop-robustness-design.md) に仕様化（未実装）。周回と無関係の `tools/saluki_chat.sh` を削除 |
 | 0.19 | 2026-10-20 | **周回頑健化を実装**（[`superpowers/specs/2026-10-20-loop-robustness-design.md`](superpowers/specs/2026-10-20-loop-robustness-design.md) T1〜T5）。テンプレ照合と固定 px オフセットを**ミラーリング窓サイズに追従**（656x341 で friendselect/lifefull/lifeshort が認識できず止まっていた）。`run_until.sh` が接続中の未認識画面・判定エラーを切断と区別。**きなこパンの個数を Vision OCR で読んだ回復量・現在 LIFE・LIFE コストから決める**（固定 3 個を廃止、枯渇判定は「回復しても LIFE が増えない」へ）。ライブ中だけのループ内訳・FPS と、打鍵回数に頼らない品質警告。mss の非推奨 API を置換 |
+| 0.20 | 2026-11-24 | **運用安全性の総点検・モジュール分割**。`--keep-selection` を既定 ON に変更（`--no-keep-selection` で旧運用）。`run_until.sh` の多重起動ガードを引数付き起動にも適用。下部パネル「オート ON」の OCR 検知停止（`auto_live_on`）・PAUSE 二次被害ダイアログの自動キャンセル復帰（`giveupconfirm`/`giveup_loop`）・LIFE コストの再起動跨ぎキャッシュを追加。`tools/copilot` を `run_until.sh` 所有権・`.venv` に整合。`autolive.py` から `matching.py`・`kinako.py` を分離し、`AutoLive.headless()` と `DEFAULT_CIRCLES` を導入。ドキュメント・プロンプトの食い違い修正とテスト高速化 |

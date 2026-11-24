@@ -52,13 +52,20 @@ class TestRefreshWindow(unittest.TestCase):
 
         作り直さないと、古い寸法基準の座標で打鍵し続ける。
         """
-        al = make_al(LAND)
-        with mock.patch.object(AL.driver, "find_window", return_value=dict(LAND2)):
-            al._refresh_window(interval=0.0)
-        self.assertEqual((38, 334 - 9), al.content, "content 矩形が更新されていない")
-        self.assertIsNone(al._roi_scale_key, "ROIスケールのキャッシュが残っている")
-        self.assertFalse(al.circles_calibrated, "円キャリブレーションが再実行されない")
-        self.assertEqual([], al.autocal_samples, "古い検出サンプルが残っている")
+        saved = list(AL.CIRCLES)
+        try:
+            AL.CIRCLES[:] = [(0.228, 0.652), (0.334, 0.823), (0.663, 0.823), (0.770, 0.652)]
+            al = make_al(LAND)
+            with mock.patch.object(AL.driver, "find_window", return_value=dict(LAND2)):
+                al._refresh_window(interval=0.0)
+            self.assertEqual((38, 334 - 9), al.content, "content 矩形が更新されていない")
+            self.assertIsNone(al._roi_scale_key, "ROIスケールのキャッシュが残っている")
+            self.assertFalse(al.circles_calibrated, "円キャリブレーションが再実行されない")
+            self.assertEqual([], al.autocal_samples, "古い検出サンプルが残っている")
+            self.assertEqual(list(AL.DEFAULT_CIRCLES), AL.CIRCLES,
+                             "横向きリサイズで CIRCLES が DEFAULT_CIRCLES へリセットされていない")
+        finally:
+            AL.CIRCLES[:] = saved
 
     def test_portrait_means_disconnected_and_keeps_calibration(self):
         """縦長になったら**切断**とみなし、円キャリブレーションを捨てないこと。
@@ -101,9 +108,10 @@ class TestRefreshWindow(unittest.TestCase):
 
     def test_called_from_main_loop(self):
         """メインループから呼ばれていること（定義しただけでは意味がない）。"""
-        src = open(os.path.join(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))), "tools", "autolive.py"),
-            encoding="utf-8").read()
+        with open(os.path.join(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))), "tools", "autolive.py"),
+                encoding="utf-8") as fh:
+            src = fh.read()
         self.assertIn("self._refresh_window()", src)
 
 

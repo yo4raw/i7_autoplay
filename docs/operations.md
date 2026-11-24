@@ -13,9 +13,9 @@ nohup python -u tools/ops/result_log.py 7200 <tag> > /tmp/i7dbg/reslog.log 2>&1 
 python tools/ops/result_log.py montage <tag>
 ```
 
-supervisor の打鍵オプションは `--flick --auto-circles`（`I7_TAP_OPTS` で**丸ごと差し替え**、
+supervisor の打鍵オプションは `--flick --auto-circles --green-hold`（`I7_TAP_OPTS` で**丸ごと差し替え**、
 `I7_TAP_EXTRA` で**既定に追記**）。`--note-lead` は指定せず `autolive.py` の既定（0.02）に従う。
-対話モードは `I7_TAP_EXTRA` 側を使う（既定値の真実の情報源を supervisor 1箇所に保つため）。
+`autolive.py` は既定で `--keep-selection` 有効（曲・難易度は人が選んだまま触らない）となっている。
 
 到達している水準（Don't Analyze Me / EASY+ / ブースト3倍）:
 
@@ -44,7 +44,7 @@ lead をさらに詰める余地がある。効果は1ライブでは誤差（±
 
 | # | 確認 | 方法 | 正常 | 異常なら |
 |---|---|---|---|---|
-| A-1 | **多重起動していない** | `ps -eo pid,command \| grep -vE "zsh -c\|grep" \| grep -E "run_until\|supervise_autolive\|tools/autolive"` | 0件 | **対話モードで起動すれば自動で検出して拒否する。** 引数付きで直接叩く場合は従来どおり目視（その経路に排他制御は無い） |
+| A-1 | **多重起動していない** | `ps -eo pid,command \| grep -vE "zsh -c\|grep" \| grep -E "run_until\|supervise_autolive\|tools/autolive"` | 0件 | **`run_until.sh` は対話モード・引数付き起動の両方で自動検出して拒否する。** `autolive.py` を単発で直接叩く場合は目視 |
 | A-2 | ミラーリングが接続されている | `.venv/bin/python tools/driver.py info` | `w > h`（横向き。例 671x348） | 縦長なら切断中。iPhone をロックして再接続 |
 | A-3 | ミラーリングが最前面 | `osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'` | `iPhone Mirroring` | 他アプリの背後だと暗い画面を gameplay と誤認する |
 | A-4 | **オートライブ OFF** | 楽曲選択下部パネルを目視 | `ブースト（イベント上限）/ オート OFF` | ON だと1ライブにつきブリンドリンク3個を消費（**大前提**） |
@@ -71,7 +71,7 @@ lead をさらに詰める余地がある。効果は1ライブでは誤差（±
 |---|---|---|---|---|
 | C-1 | **ライブ中ループ周波数** | クリア直後の `ライブ内訳 … / FPS X.X (gameplay/pause Ns)` の X。ライブ中（gameplay/pause）だけの実効値 | **26〜37 FPS** | 25 未満なら `[warn]` が出る。パラメータではなく**処理の重さ**が原因。内訳の `[取得/判定/打鍵]` と `経路[暗/薄暗+輪/明/再照合/救済]` でボトルネックを特定する（「明」が多い＝明るい MV で誤判定 → 全段照合≈1秒/フレームが主因の実績あり） |
 | C-2 | **打鍵回数 vs ノーツ数** | `打鍵A回 / 判定Bフレーム` の A と リザルトの PERFECT+GOOD+BAD+MISS | A ≧ ノーツ数 | A < ノーツ数なら**検出**の問題（円座標・しきい値）。A ≧ なのに MISS が多いなら**タイミング**の問題 |
-| C-3 | PAUSE 発生 | `grep -c "PAUSE → 再開"` | **0** | 数秒周期で出るなら合成入力が genuine と認識されていない（再接続病）。iPhone 本体の電源再投入 |
+| C-3 | PAUSE 発生 | `grep -c "PAUSE → 再開"` | **0** | 数秒周期で出るなら合成入力が genuine と認識されていない（再接続病）。**iPhone ミラーリングの接続を一度切って繋ぎ直す**（端末の再起動は効かない。[pause-causes.md](pause-causes.md) 参照） |
 | C-4 | 実マウスを動かしていない | — | 触らない | 実行中はカーソルがクリック点へワープし続ける。触ると打鍵が乱れる |
 | C-5 | ホスト側で他コマンドを叩いていない | — | 叩かない | フォーカスを奪うとミラーリングが背面に回り、暗い画面を gameplay と誤認して停止する |
 

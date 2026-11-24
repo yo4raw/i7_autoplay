@@ -27,18 +27,18 @@ macOS の **iPhone ミラーリング** 越しに **アイドリッシュセブ�
 
 1. **LIFE 回復はきなこパンのみ。ステラは絶対に使わない。** ステラのボタン座標は意図的に
    コードに持たせていない。きなこパンが尽きたら**フォールバックせず停止**する。
-   > **⚠️ この規則は現在のコードでは守られていない（2026-07-31 判明・既遂）。**
+   > **⚠️ 過去の事故と現在の防御（2026-07-31 判明・対策実装済み）**:
    > きなこパンが 0 個になるとダイアログから**きなこパン行が消えて上に詰まり**、
-   > `ANCH_KINAKO` の着弾点がステラの「回復」ボタン中央になる。実機で
-   > ステラ所持が 58→55→52 と3個ずつ減っていた。ログには「ステラ不使用」と出るため
-   > 気づけない。**周回前にきなこパン残量とステラ所持数を必ず確認すること。**
-   > 対策は実装済み（きなこパン行を照合し、見つからなければクリックせず安全停止）。
+   > 旧実装（見出し基準の固定オフセット）では着弾点がステラの「回復」ボタン中央になっていた
+   > （実機でステラ所持が 58→55→52 と減少。ログには「ステラ不使用」と出るため気づけなかった）。
+   > **現在のコードでは対策済み**: 押す前にきなこパン行の存在をテンプレ照合で確認し、
+   > 見つからなければクリックせず安全停止（`kinako_missing`）する。
+   > それでも多重防御として、**周回前後にきなこパン残量とステラ所持数を必ず確認すること。**
    > 詳細: [`docs/screen-flow.md`](docs/screen-flow.md)「課金事故を防ぐ設計」
 2. **難易度は人が選んだものをそのまま継続する（ユーザー指定・2026-10-20）。**
-   周回は `--keep-selection`（run-forever skill・対話モードでは固定）で回し、
+   `autolive.py` の既定は `--keep-selection` 有効（`keep_selection=True`）になっており、
    楽曲選択では曲も難易度もタップせず NEXT だけ押す。人が選んだ難易度を EASY 等へ戻さない。
-   > 旧規則は「必ず EASY」。`--keep-selection` を付けない既定経路（Don't Analyze Me + EASY 固定）は
-   > 旧運用のために残っているだけで、使うときは人が明示的に選ぶ。
+   > 旧運用（Don't Analyze Me + EASY 固定）を使うときだけ明示的に `--no-keep-selection` を渡す。
 3. **イベント楽曲へはホームの EVENT リボンから入る。** ホームの「LIVE」ボタンから入ると
    通常ライブで、クリアしてもイベント pt が一切付かない。
    > リボンは**2つ並ぶ**（2026-08-02 実測。位置は左下ではなく**右側**）。
@@ -80,16 +80,16 @@ macOS の **iPhone ミラーリング** 越しに **アイドリッシュセブ�
 ```bash
 # セットアップ（Python 3.11+。リポジトリは Python 3.14 の .venv を使用）
 python3 -m venv .venv && source .venv/bin/activate
-pip install pyobjc-framework-Quartz pyobjc-framework-Cocoa pyobjc-framework-Vision opencv-python mss numpy Pillow
+pip install -r requirements.txt
 
 # 無人周回の標準手順（ゲームを「イベント楽曲の楽曲選択画面」にしてから実行）
-# run_until.sh が最上位。切断中は待機し、復帰したら自動再開する
-tools/ops/run_until.sh          # 引数なし＝対話。起動前チェック表示・多重起動を拒否・裏へ回る
-nohup tools/ops/run_until.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &   # 引数あり＝従来どおり
+# run_until.sh が最上位。多重起動は対話・引数ありの両方で自動拒否し、切断中は待機して復帰後に再開する
+tools/ops/run_until.sh          # 引数なし＝対話。起動前チェック表示・時間選択・裏へ回る
+nohup tools/ops/run_until.sh $(( $(date +%s) + 7200 )) > /dev/null 2>&1 &   # 引数あり（曲・難易度は既定で人が選んだまま継続）
 # 起動前の確認項目とログの見かたは docs/README.md「周回開始コマンド」
 
 # 単発（ゲームをイベントライブ開始済み or 楽曲選択画面にしてから実行）
-python tools/autolive.py --loops 50 --max-seconds 7200 --flick --auto-circles
+python tools/autolive.py --loops 50 --max-seconds 7200 --flick --auto-circles --green-hold
 python tools/autolive.py --loops 3 --verbose          # 短いデバッグ実行
 python tools/autolive.py --loops 2 --dry-run          # 判定のみ・クリックしない
 
@@ -104,6 +104,7 @@ python tools/driver.py click <xfrac> <yfrac>
 
 # テスト（実機不要・合成フレームとコーパス）
 .venv/bin/python -m unittest discover -s tests
+zsh tests/test_run_until.sh
 ```
 
 **`--auto-circles` は必須級。** 円座標は機種差で数十 px ずれ、無効だと MISS が跳ね上がる
@@ -118,7 +119,7 @@ python tools/driver.py click <xfrac> <yfrac>
 再起動すること。macOS のアップデートでこれらは無言で無効化される。
 詳細は [`docs/setup.md`](docs/setup.md)。
 
-リンタ／フォーマッタは未設定。デバッグ用スクショは `/tmp/i7dbg/` に保存される。
+依存パッケージは [`requirements.txt`](requirements.txt)、リンタ設定（`ruff`）は [`pyproject.toml`](pyproject.toml) に定義。デバッグ用スクショは `/tmp/i7dbg/` に保存される。
 
 ## LLM copilot（廉価モデル併用の無人運用）
 
@@ -136,13 +137,13 @@ LLM に依存しない設計を維持すること。
 - **監視・復旧スーパーバイザー**: 2系統ある。
   - **pi-durable 版（推奨・クラッシュ再開可能）**: `tools/copilot/`（`@earendil-works/pi-durable`）。
     `cd tools/copilot && npm install` のあと `tools/copilot/bin/watch.sh <target_epoch> [interval] [model]` を
-    `supervise_autolive.sh` と並走させる。判断表は `assets/prompts/pi_durable_copilot.md`
+    `run_until.sh` と並走させる。判断表は `assets/prompts/pi_durable_copilot.md`
     （`supervisor_loop.md` の移植）。プロセスが落ちても SQLite から途中再開する。
     詳細は [`tools/copilot/README.md`](tools/copilot/README.md)。
   - **Claude Code /loop 版（従来）**: このリポジトリで Claude Code セッションを開き（Haiku/Sonnet で足りる）
     `assets/prompts/supervisor_loop.md を読み、その指示に従って /loop で監視して` と指示する
     （自己ペース /loop、目安 20 分間隔）。正常周回中は何もしないのが規律。
-    `nohup tools/ops/supervise_autolive.sh <target_epoch> &` と併用可。
+    `nohup tools/ops/run_until.sh <target_epoch> > /dev/null 2>&1 &` と併用可。
 - **イベント導線ナビ**: ホーム画面にあるとき
   `assets/prompts/event_navigation.md を読み、ホームからイベントライブ開始まで進めて` と指示する。
   ライブが始まったら `python tools/autolive.py --loops N --flick` を起動。

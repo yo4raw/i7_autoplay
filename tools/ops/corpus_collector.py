@@ -32,7 +32,7 @@ def main():
         "tests", "corpus_raw")
     os.makedirs(out, exist_ok=True)
 
-    al = autolive.AutoLive(max_loops=1, dry_run=True, verbose=False)  # 入力封印
+    al = autolive.AutoLive.headless(win=driver.find_window(), verbose=False)  # 入力封印・副作用なし
     counts = {}
     t0 = time.time()
     last_state = None

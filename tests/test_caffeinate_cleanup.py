@@ -68,8 +68,11 @@ class TestSigtermReleasesCaffeinate(unittest.TestCase):
             self.assertFalse(_alive(caf_pid),
                              "SIGTERM 後も caffeinate が残っている（孤児化）")
         finally:
+            if p.stdout is not None:
+                p.stdout.close()
             if p.poll() is None:
                 p.kill()
+                p.wait(timeout=5)
 
 
 class TestAutoliveInstallsHandler(unittest.TestCase):

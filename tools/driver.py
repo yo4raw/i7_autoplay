@@ -62,6 +62,8 @@ def find_window():
 
 MIRROR_BUNDLE_ID = "com.apple.ScreenContinuity"
 _MIRROR_APP = None
+# genuine な HID 入力として認識させるイベントソース（CLAUDE.md 絶対規則 7・PAUSE 防止）
+_HID_SRC = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
 
 
 def _mirror_app():
@@ -132,30 +134,39 @@ def frac_to_screen_pt(win, xf, yf):
     return (win["x"] + win["w"] * xf, win["y"] + win["h"] * yf)
 
 
-def click_pt(px, py):
-    """画面ポイント座標に左クリックを送る(CGEvent)。"""
+def hid_click_pt(px, py, hold_sec=0.0):
+    """実カーソルワープ + HIDSystemState ソースで左クリックを送る（PAUSE 非誘発）。
+
+    iPhone ミラーリングは source=None の合成クリックではアイドル判定をリセットせず
+    数秒ごとに PAUSE するため、autolive・手動ドライバともこの経路に統一する。
+    """
+    Quartz.CGWarpMouseCursorPosition((px, py))
+    mv = Quartz.CGEventCreateMouseEvent(
+        _HID_SRC, Quartz.kCGEventMouseMoved, (px, py), Quartz.kCGMouseButtonLeft
+    )
     down = Quartz.CGEventCreateMouseEvent(
-        None, Quartz.kCGEventLeftMouseDown, (px, py), Quartz.kCGMouseButtonLeft
+        _HID_SRC, Quartz.kCGEventLeftMouseDown, (px, py), Quartz.kCGMouseButtonLeft
     )
     up = Quartz.CGEventCreateMouseEvent(
-        None, Quartz.kCGEventLeftMouseUp, (px, py), Quartz.kCGMouseButtonLeft
+        _HID_SRC, Quartz.kCGEventLeftMouseUp, (px, py), Quartz.kCGMouseButtonLeft
     )
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, mv)
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
-    time.sleep(0.05)
+    if hold_sec > 0:
+        time.sleep(hold_sec)
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
+
+
+def click_pt(px, py):
+    """画面ポイント座標に左クリックを送る(HIDSystemState + CGEvent)。"""
+    hid_click_pt(px, py, hold_sec=0.05)
 
 
 def click_frac(xf, yf):
     activate()
     win = find_window()
     px, py = frac_to_screen_pt(win, xf, yf)
-    # まずカーソルを移動させてからクリック（取りこぼし防止）
-    move = Quartz.CGEventCreateMouseEvent(
-        None, Quartz.kCGEventMouseMoved, (px, py), Quartz.kCGMouseButtonLeft
-    )
-    Quartz.CGEventPost(Quartz.kCGHIDEventTap, move)
-    time.sleep(0.08)
-    click_pt(px, py)
+    hid_click_pt(px, py, hold_sec=0.05)
     return px, py
 
 

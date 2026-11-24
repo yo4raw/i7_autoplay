@@ -18,7 +18,8 @@ class TestCorpusSmoke(unittest.TestCase):
         files = sorted(glob.glob(os.path.join(CORPUS, "*.png")))[:30]
         self.assertGreater(len(files), 0)
         for fp in files:
-            frame = np.array(Image.open(fp).convert("RGB"))
+            with Image.open(fp) as im:
+                frame = np.array(im.convert("RGB"))
             h, w = frame.shape[:2]
             win = {"x": 0, "y": 0, "w": w, "h": h}
             content = (38, h - 9)
@@ -26,10 +27,16 @@ class TestCorpusSmoke(unittest.TestCase):
             NE.detect_circles(frame, win, content)   # 同上
 
 # 実フレームコーパスの各ディレクトリ名 = そのフレームの正しい状態。
-# **例外**: result/092648_enter.png は per-song Result の EXP 画面で、`expresult` が
-# 正しい（`expresult` は仕様上 `result` より先に判定される）。
+# **例外**:
+# - result/092648_enter.png は per-song Result の EXP 画面で、`expresult` が正しい
+#   （`expresult` は仕様上 `result` より先に判定される）。
+# - menu/003110_enter.png は PAUSE から「諦める」を踏んだ確認ダイアログで、採取当時は
+#   テンプレ未実装のため `menu/` に落ちていたが、現在は専用状態 `giveupconfirm` が正しい。
 CORPUS_ROOT = os.path.join(os.path.dirname(__file__), "corpus_raw")
-STATE_EXCEPTIONS = {"result/092648_enter.png": "expresult"}
+STATE_EXCEPTIONS = {
+    "result/092648_enter.png": "expresult",
+    "menu/003110_enter.png": "giveupconfirm",
+}
 
 
 @unittest.skipUnless(os.path.isdir(CORPUS_ROOT), "実フレームコーパスなし（任意）")
@@ -59,13 +66,12 @@ class TestCorpusStatesUnchanged(unittest.TestCase):
             for fp in sorted(glob.glob(os.path.join(d, "*.png")))[:2]:
                 rel = f"{expected_dir}/{os.path.basename(fp)}"
                 expected = STATE_EXCEPTIONS.get(rel, expected_dir)
-                frame = np.array(Image.open(fp).convert("RGB"))
-                al = AL.AutoLive.__new__(AL.AutoLive)
-                al.templates = templates
-                al.win = {"x": 0, "y": 0, "w": frame.shape[1], "h": frame.shape[0]}
-                al.content = (38, frame.shape[0] - 9)
-                al.verbose = False
-                al._last_dark_check = 0.0
+                with Image.open(fp) as im:
+                    frame = np.array(im.convert("RGB"))
+                al = AL.AutoLive.headless(
+                    win={"x": 0, "y": 0, "w": frame.shape[1], "h": frame.shape[0]},
+                    templates=templates,
+                )
                 state, _ = al.detect(frame)
                 checked += 1
                 if state != expected:
